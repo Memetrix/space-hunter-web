@@ -1,0 +1,160 @@
+@import "tailwindcss";
+
+@font-face {
+  font-family: 'PixelOperator';
+  src: url('/fonts/PixelOperator.ttf') format('truetype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+
+@font-face {
+  font-family: 'PixelOperator';
+  src: url('/fonts/PixelOperator-Bold.ttf') format('truetype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+@theme inline {
+  --color-bg-dark: #050508;
+  --color-bg-medium: #0c0c16;
+  --color-bg-light: #141422;
+  --color-border: #1a1a2e;
+  --color-border-light: #2a2a44;
+  --color-hal-red: #cc2200;
+  --color-hal-dim: #661100;
+  --color-hal-glow: #ff3300;
+  --color-text-primary: #cc8866;
+  --color-text-secondary: #774433;
+  --color-text-muted: #442211;
+  --color-accent-gold: #ffaa00;
+  --color-accent-green: #33cc44;
+  --color-accent-purple: #8833cc;
+  --color-accent-red: #ff2200;
+  --color-accent-cyan: #2299cc;
+  --color-accent-orange: #cc6600;
+  --font-pixel: 'PixelOperator', monospace;
+}
+
+* {
+  -webkit-tap-highlight-color: transparent;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+body {
+  background: var(--color-bg-dark);
+  color: var(--color-text-primary);
+  font-family: var(--font-pixel);
+  font-size: 16px;
+  touch-action: manipulation;
+}
+
+/* HAL button */
+.pixel-btn {
+  border: 1px solid var(--color-hal-dim);
+  background: rgba(204, 34, 0, 0.06);
+  color: var(--color-text-primary);
+  font-family: var(--font-pixel);
+  padding: 14px 22px;
+  min-height: 52px;
+  cursor: pointer;
+  transition: all 0.15s;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  font-size: 14px;
+}
+.pixel-btn:hover {
+  background: rgba(204, 34, 0, 0.15);
+  border-color: var(--color-hal-red);
+  color: var(--color-hal-glow);
+}
+.pixel-btn:active {
+  background: rgba(204, 34, 0, 0.25);
+}
+.pixel-btn:disabled {
+  opacity: 0.25;
+  cursor: default;
+}
+
+/* Primary CTA */
+.pixel-btn-primary {
+  border-color: var(--color-hal-red);
+  background: rgba(204, 34, 0, 0.12);
+  color: var(--color-hal-glow);
+  box-shadow: 0 0 20px rgba(255, 51, 0, 0.1), inset 0 0 20px rgba(255, 51, 0, 0.05);
+}
+.pixel-btn-primary:hover {
+  background: rgba(204, 34, 0, 0.22);
+  box-shadow: 0 0 30px rgba(255, 51, 0, 0.2), inset 0 0 30px rgba(255, 51, 0, 0.08);
+}
+
+/* Ghost */
+.pixel-btn-ghost {
+  background: transparent;
+  border-color: var(--color-border);
+  color: var(--color-text-secondary);
+}
+.pixel-btn-ghost:hover {
+  background: rgba(204, 34, 0, 0.06);
+  border-color: var(--color-hal-dim);
+  color: var(--color-text-primary);
+}
+
+/* Terminal card */
+.pixel-card {
+  border: 1px solid var(--color-border);
+  background: rgba(12, 12, 22, 0.8);
+  padding: 16px;
+  position: relative;
+}
+
+/* Progress bar */
+.pixel-bar {
+  height: 10px;
+  background: rgba(5, 5, 8, 0.9);
+  border: 1px solid var(--color-border);
+  overflow: hidden;
+}
+.pixel-bar-fill {
+  height: 100%;
+  transition: width 0.3s;
+}
+
+/* CRT scan line effect */
+.scanlines::after {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    transparent 0px,
+    transparent 2px,
+    rgba(0, 0, 0, 0.06) 2px,
+    rgba(0, 0, 0, 0.06) 4px
+  );
+  z-index: 100;
+}
+
+/* HAL eye glow animation */
+@keyframes hal-pulse {
+  0%, 100% { opacity: 0.6; }
+  50% { opacity: 1; }
+}
+.hal-pulse {
+  animation: hal-pulse 3s ease-in-out infinite;
+}
+
+@keyframes hal-blink {
+  0%, 90%, 100% { opacity: 1; }
+  95% { opacity: 0.3; }
+}
+.hal-blink {
+  animation: hal-blink 4s ease-in-out infinite;
+}
+
+/* Scrollbar */
+::-webkit-scrollbar { width: 3px; }
+::-webkit-scrollbar-track { background: var(--color-bg-dark); }
+::-webkit-scrollbar-thumb { background: var(--color-hal-dim); }

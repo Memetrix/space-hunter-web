@@ -1,0 +1,37 @@
+export type EnemyBehavior = 'charge' | 'flank' | 'burst' | 'strafe' | 'pack' | 'lurker' | 'patrol_river' | 'elite';
+
+export interface CreatureDef {
+  name: string;
+  radius: number;
+  color: number;
+  speed: number;
+  hp: number;
+  detection: number;
+  meleeDmg: number;
+  ranged: boolean;
+  rangedDmg: number;
+  rangedCooldown: number;
+  voidType: boolean;
+  behavior: EnemyBehavior;
+  ingredient: { id: string; name: string };
+}
+
+export const CREATURE_DEFS: Record<string, CreatureDef> = {
+  'Void Leech':     { name: 'Void Leech',     radius: 14, color: 0x8833cc, speed: 100, hp: 5,  detection: 350, meleeDmg: 1, ranged: false, rangedDmg: 0, rangedCooldown: 0, voidType: false, behavior: 'charge',       ingredient: { id: 'void_extract', name: 'Void Extract' } },
+  'Shadow Crawler': { name: 'Shadow Crawler', radius: 13, color: 0x556688, speed: 110, hp: 5,  detection: 330, meleeDmg: 1, ranged: false, rangedDmg: 0, rangedCooldown: 0, voidType: false, behavior: 'flank',        ingredient: { id: 'shadow_membrane', name: 'Shadow Membrane' } },
+  'Abyss Worm':     { name: 'Abyss Worm',     radius: 18, color: 0x775522, speed: 65,  hp: 9,  detection: 300, meleeDmg: 2, ranged: false, rangedDmg: 0, rangedCooldown: 0, voidType: false, behavior: 'burst',        ingredient: { id: 'abyss_flesh', name: 'Abyss Flesh' } },
+  'Nether Stalker': { name: 'Nether Stalker', radius: 13, color: 0x447788, speed: 70,  hp: 6,  detection: 400, meleeDmg: 0, ranged: true,  rangedDmg: 2, rangedCooldown: 2.5, voidType: false, behavior: 'strafe',     ingredient: { id: 'nether_bile', name: 'Nether Bile' } },
+  'Rift Parasite':  { name: 'Rift Parasite',  radius: 11, color: 0xbb33ff, speed: 100, hp: 6,  detection: 330, meleeDmg: 1, ranged: false, rangedDmg: 0, rangedCooldown: 0, voidType: true,  behavior: 'pack',         ingredient: { id: 'rift_spore', name: 'Rift Spore' } },
+  'Cave Lurker':    { name: 'Cave Lurker',    radius: 16, color: 0xaa8866, speed: 140, hp: 8,  detection: 250, meleeDmg: 3, ranged: false, rangedDmg: 0, rangedCooldown: 0, voidType: false, behavior: 'lurker',       ingredient: { id: 'cave_crystal', name: 'Cave Crystal' } },
+  'Tide Wraith':    { name: 'Tide Wraith',    radius: 13, color: 0x3366cc, speed: 120, hp: 5,  detection: 380, meleeDmg: 0, ranged: true,  rangedDmg: 2, rangedCooldown: 2.0, voidType: false, behavior: 'patrol_river', ingredient: { id: 'tide_essence', name: 'Tide Essence' } },
+  'Void Spawn':     { name: 'Void Spawn',     radius: 11, color: 0x9922dd, speed: 95,  hp: 4,  detection: 310, meleeDmg: 1, ranged: false, rangedDmg: 0, rangedCooldown: 0, voidType: true,  behavior: 'pack',         ingredient: { id: 'void_core', name: 'Void Core' } },
+};
+
+export const CREATURE_NAMES = Object.keys(CREATURE_DEFS);
+
+export const BIOME_POOLS: Record<string, string[]> = {
+  open:       ['Void Leech', 'Nether Stalker', 'Shadow Crawler'],
+  river_bank: ['Abyss Worm', 'Tide Wraith', 'Nether Stalker'],
+  cave:       ['Cave Lurker', 'Shadow Crawler'],
+  void_pool:  ['Rift Parasite', 'Void Spawn', 'Void Leech'],
+};
