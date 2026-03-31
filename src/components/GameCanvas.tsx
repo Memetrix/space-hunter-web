@@ -1,8 +1,10 @@
 'use client';
 
-import { useRef, useEffect, useCallback } from 'react';
+import { useRef, useEffect, useCallback, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useSaveStore } from '../store/saveStore';
+import { ModifierPicker } from './ModifierPicker';
+import type { ModifierDef } from '../data/modifiers';
 
 export function GameCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -15,11 +17,15 @@ export function GameCanvas() {
   const hpUpgrade = useSaveStore(s => s.shipUpgrades.max_hp ?? 0);
   const magUpgrade = useSaveStore(s => s.shipUpgrades.mag_size ?? 0);
 
+  // Modifier picker state
+  const [modChoices, setModChoices] = useState<ModifierDef[] | null>(null);
+  const modResolveRef = useRef<((m: ModifierDef) => void) | null>(null);
+
   const finishHunt = useCallback((status: 'COMPLETED' | 'FAILED' | 'ABANDONED', result: Parameters<typeof setHuntResult>[0] extends infer R ? Omit<R, 'contractName' | 'huntStatus' | 'parTime'> : never) => {
     setHuntResult({
       contractName: contract?.name ?? 'Hunt',
       huntStatus: status,
-      parTime: 300,
+      parTime: contract?.parTime ?? 300,
       ...result,
     });
     setScreen('results');
@@ -74,6 +80,15 @@ export function GameCanvas() {
             const status = r.totalKills >= (contract?.targetTotal ?? 10) ? 'COMPLETED' : 'FAILED';
             finishHunt(status, r);
           },
+          onModifierPick: (choices, resolve) => {
+            setModChoices(choices);
+            modResolveRef.current = resolve;
+          },
+        },
+        {
+          holdTime: contract?.holdTime,
+          podHp: contract?.podHp,
+          cacheCount: contract?.cacheCount,
         }
       );
 
@@ -111,9 +126,17 @@ export function GameCanvas() {
     }
   };
 
+  const handleModPick = (mod: ModifierDef) => {
+    setModChoices(null);
+    modResolveRef.current?.(mod);
+    modResolveRef.current = null;
+  };
+
   return (
     <div className="h-full w-full relative">
       <div ref={containerRef} className="h-full w-full" />
+      {/* Modifier picker overlay */}
+      {modChoices && <ModifierPicker choices={modChoices} onPick={handleModPick} />}
       {/* Abandon overlay button */}
       <button
         className="absolute bottom-2 left-2 pixel-btn text-[10px] py-1 px-2 opacity-60 hover:opacity-100"

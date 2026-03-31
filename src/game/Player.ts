@@ -30,6 +30,8 @@ export class Player {
   fireCooldown = 0;
   weaponLevel = 1;
   mutated = '';
+  justReloaded = false;    // true for one shot after reload (for Precision modifier)
+  baseSpeed: number;
 
   // Aim
   aimAngle = 0;
@@ -44,6 +46,7 @@ export class Player {
     this.hp = maxHp;
     this.maxHp = maxHp;
     this.speed = PLAYER_BASE_SPEED;
+    this.baseSpeed = PLAYER_BASE_SPEED;
     this.magSize = magSize;
     this.magAmmo = magSize;
   }
@@ -87,9 +90,9 @@ export class Player {
     this.pos.x = clamp(this.pos.x, this.radius, WORLD_W - this.radius);
     this.pos.y = clamp(this.pos.y, this.radius, WORLD_H - this.radius);
 
-    // Void corruption
+    // Void corruption (with resist modifier)
     const voidCorr = map.getVoidCorruption(this.pos.x, this.pos.y);
-    if (voidCorr > 0) this.corruption = Math.min(100, this.corruption + voidCorr * dt);
+    if (voidCorr > 0) this.corruption = Math.min(100, this.corruption + voidCorr * this.corruptionResistMult * dt);
 
     // Reload
     if (this.reloadTimer > 0) {
@@ -97,6 +100,7 @@ export class Player {
       if (this.reloadTimer <= 0) {
         this.magAmmo = this.magSize;
         this.reloadTimer = 0;
+        this.justReloaded = true;
       }
     }
 
@@ -113,8 +117,15 @@ export class Player {
     }
   }
 
+  /** dodgeChance is set by Game when 'dodge' modifier is active */
+  dodgeChance = 0;
+  /** corruptionResist multiplier (0.75 when modifier active) */
+  corruptionResistMult = 1.0;
+
   takeDamage(amount: number): boolean {
     if (this.iFrames > 0) return false;
+    // Dodge check
+    if (this.dodgeChance > 0 && Math.random() < this.dodgeChance) return false;
     this.hp -= amount;
     this.iFrames = 0.3;
     this.hitFlash = 0.15;

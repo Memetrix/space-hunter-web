@@ -6,8 +6,9 @@ import { WeaponSystem } from './Weapons';
 import { EnemySystem, type Enemy } from './Enemies';
 import { HUD } from './HUD';
 import { v2dist } from '../lib/math';
-import { PLAYER_BASE_HP, WORLD_W, WORLD_H, PLAYER_COLOR, XP_PER_LEVEL, MAX_LEVEL } from './constants';
+import { PLAYER_BASE_HP, PLAYER_BASE_SPEED, WORLD_W, WORLD_H, PLAYER_COLOR, XP_PER_LEVEL, MAX_LEVEL } from './constants';
 import { CREATURE_DEFS } from '../data/creatures';
+import { type ModifierDef, rollModifiers } from '../data/modifiers';
 import {
   halSay,
   HAL_HUNT_START, HAL_WAVE_INCOMING, HAL_FIRST_KILL, HAL_KILL_STREAK,
@@ -58,6 +59,8 @@ export interface GameCallbacks {
     peakCorruption: number; damageDealt: number; damageTaken: number;
     ingredients: Array<{ id: string; name: string }>;
   }) => void;
+  /** Called between waves to let the player pick a modifier. Game is paused until resolved. */
+  onModifierPick: (choices: ModifierDef[], resolve: (picked: ModifierDef) => void) => void;
 }
 
 export class Game {
@@ -108,6 +111,25 @@ export class Game {
   hpBonus = 0;
   magBonus = 0;
 
+  // Contract-specific state
+  holdTime = 0;          // void_breach: seconds remaining
+  holdTimer = 0;         // void_breach: seconds held so far
+  holdZoneActive = false; // void_breach: player in hold zone
+  podHp = 0;             // payload_escort: pod HP
+  podMaxHp = 0;
+  podProgress = 0;       // payload_escort: 0→1 delivery progress
+  cacheCount = 0;        // extraction_run: total caches
+  cachesCollected = 0;   // extraction_run: collected so far
+
+  // Active modifiers
+  activeModifiers: string[] = [];
+  modifierPickPending = false;     // true while waiting for player to choose
+  adrenalineKills = 0;             // kills within 3s window for adrenaline
+  adrenalineTimer = 0;
+  adrenalineStacks = 0;
+  momentumHits = 0;                // consecutive hits for momentum
+  killsSinceLastHeal = 0;          // counter for vamp
+
   // HAL event tracking
   halCooldown = 0;              // global cooldown between HAL messages
   halReloadSaid = false;        // don't spam reload messages
@@ -121,7 +143,11 @@ export class Game {
   halHalfSaid = false;
   halNearSaid = false;
 
-  constructor(app: Application, kits: string[], contractType: string, targetTotal: number, hpBonus: number, magBonus: number, callbacks: GameCallbacks) {
+  constructor(
+    app: Application, kits: string[], contractType: string, targetTotal: number,
+    hpBonus: number, magBonus: number, callbacks: GameCallbacks,
+    contractExtras?: { holdTime?: number; podHp?: number; cacheCount?: number }
+  ) {
     this.app = app;
     this.callbacks = callbacks;
     this.equippedKits = kits;
@@ -129,6 +155,18 @@ export class Game {
     this.targetTotal = targetTotal;
     this.hpBonus = hpBonus;
     this.magBonus = magBonus;
+
+    // Contract-specific init
+    if (contractExtras?.holdTime) {
+      this.holdTime = contractExtras.holdTime;
+    }
+    if (contractExtras?.podHp) {
+      this.podHp = contractExtras.podHp;
+      this.podMaxHp = contractExtras.podHp;
+    }
+    if (contractExtras?.cacheCount) {
+      this.cacheCount = contractExtras.cacheCount;
+    }
 
     const vw = app.screen.width;
     const vh = app.screen.height;
@@ -476,9 +514,15 @@ export class Game {
     // Remove expired bullets
     this.weapons.bullets = this.weapons.bullets.filter(b => b.life > 0);
 
+    // Adrenaline timer (for modifier)
+    if (this.adrenalineTimer > 0) {
+      this.adrenalineTimer -= dt;
+      if (this.adrenalineTimer <= 0) this.adrenalineKills = 0;
+    }
+
     // Waves
     this.waveTimer -= dt;
-    if (this.waveTimer <= 0 && this.enemies.enemies.length < 50) {
+    if (this.waveTimer <= 0 && this.enemies.enemies.length < 50 && !this.modifierPickPending) {
       this.waveCount++;
       const count = 10 + this.waveCount * 3 + Math.floor(this.elapsed / 60) * 2;
       this.enemies.spawnWave(Math.min(count, 30), this.player.pos, this.map);
@@ -487,6 +531,11 @@ export class Game {
       if (this.halCooldown <= 0) {
         setTimeout(() => this.hud.showHalMessage(halSay(HAL_WAVE_INCOMING), 3), 600);
         this.halCooldown = 5;
+      }
+
+      // Offer modifier pick every 2nd wave (wave 2, 4, 6...)
+      if (this.waveCount > 0 && this.waveCount % 2 === 0 && this.activeModifiers.length < 6) {
+        this.offerModifierPick();
       }
     }
 
@@ -498,10 +547,58 @@ export class Game {
       setTimeout(() => this.finishHunt('FAILED'), 2000);
     }
 
-    // Contract completion
-    if (this.contractType === 'hunt' && this.targetCount >= this.targetTotal && !this.complete) {
+    // ── Contract-type-specific updates & completion ──
+
+    // VOID BREACH: hold zone timer
+    if (this.contractType === 'void_breach' && !this.complete) {
+      // Player must stay near center of map (simplified hold zone)
+      const cx = WORLD_W / 2, cy = WORLD_H / 2;
+      const distToCenter = v2dist(this.player.pos, { x: cx, y: cy });
+      this.holdZoneActive = distToCenter < 300;
+      if (this.holdZoneActive) {
+        this.holdTimer += dt;
+        // Corruption builds faster in hold zone
+        this.player.corruption = Math.min(100, this.player.corruption + 3.0 * this.player.corruptionResistMult * dt);
+      }
+      if (this.holdTimer >= this.holdTime) {
+        this.complete = true;
+        this.hud.showMessage('BREACH SEALED', 2);
+        this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
+        setTimeout(() => this.finishHunt('COMPLETED'), 2000);
+      }
+    }
+
+    // PAYLOAD ESCORT: pod moves toward exit, player must stay near
+    if (this.contractType === 'payload_escort' && !this.complete) {
+      const podSpeed = 40; // px/s
+      const nearPlayer = v2dist(this.player.pos, { x: WORLD_W * this.podProgress, y: WORLD_H / 2 }) < 250;
+      if (nearPlayer && this.podHp > 0) {
+        this.podProgress += (podSpeed / WORLD_W) * dt;
+      }
+      if (this.podProgress >= 1) {
+        this.complete = true;
+        this.hud.showMessage('POD DELIVERED', 2);
+        this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
+        setTimeout(() => this.finishHunt('COMPLETED'), 2000);
+      }
+      if (this.podHp <= 0 && !this.complete) {
+        this.hud.showMessage('POD DESTROYED', 2);
+        setTimeout(() => this.finishHunt('FAILED'), 2000);
+      }
+    }
+
+    // HUNT & BOSS HUNT: kill target count
+    if ((this.contractType === 'hunt' || this.contractType === 'boss_hunt') && this.targetCount >= this.targetTotal && !this.complete) {
       this.complete = true;
       this.hud.showMessage('CONTRACT COMPLETE', 2);
+      this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
+      setTimeout(() => this.finishHunt('COMPLETED'), 2000);
+    }
+
+    // EXTRACTION RUN: collect caches (simplified — caches spawn as special map points)
+    if (this.contractType === 'extraction_run' && this.cachesCollected >= this.cacheCount && this.cacheCount > 0 && !this.complete) {
+      this.complete = true;
+      this.hud.showMessage('CACHES COLLECTED', 2);
       this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
       setTimeout(() => this.finishHunt('COMPLETED'), 2000);
     }
@@ -533,6 +630,48 @@ export class Game {
     this.player.essenceCollected++;
     this.halKillsSinceStreak++;
     this.halKillStreakTimer = 4; // reset 4s streak window
+
+    // ── Modifier effects on kill ──
+    const isVoidEnemy = enemy.voidType;
+
+    // Void Hunger: kill void → +1 HP
+    if (this.hasMod('void_hunger') && isVoidEnemy) {
+      this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
+    }
+
+    // Void Drain: kill void → −3 corruption
+    if (this.hasMod('void_drain') && isVoidEnemy) {
+      this.player.corruption = Math.max(0, this.player.corruption - 3);
+    }
+
+    // Scavenger: ingredient drops also give +1 essence
+    if (this.hasMod('scavenger')) {
+      this.player.essenceCollected++;
+    }
+
+    // Vamp: 1 in 5 kills → +1 HP
+    if (this.hasMod('vamp')) {
+      this.killsSinceLastHeal++;
+      if (this.killsSinceLastHeal >= 5) {
+        this.killsSinceLastHeal = 0;
+        this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
+      }
+    }
+
+    // Adrenaline: 3 kills in 3s → +5% speed stack
+    if (this.hasMod('adrenaline')) {
+      this.adrenalineKills++;
+      this.adrenalineTimer = 3;
+      if (this.adrenalineKills >= 3) {
+        this.adrenalineStacks++;
+        this.adrenalineKills = 0;
+      }
+    }
+
+    // Momentum: reset on miss (handled in bullet code), but we track consecutive
+    if (this.hasMod('momentum')) {
+      this.momentumHits++;
+    }
 
     // HAL: first kill
     if (this.totalKills === 1 && this.halCooldown <= 0) {
@@ -742,6 +881,72 @@ export class Game {
       g.circle(b.pos.x, b.pos.y, b.radius * 1.5).fill({ color: 0xff2200, alpha: 0.8 });
       g.circle(b.pos.x, b.pos.y, b.radius * 0.6).fill({ color: 0xff8866, alpha: 0.9 });
     }
+  }
+
+  /** Pause game and let player pick a modifier */
+  private offerModifierPick() {
+    const choices = rollModifiers(3, this.activeModifiers);
+    if (choices.length === 0) return;
+    this.modifierPickPending = true;
+    this.paused = true;
+    this.callbacks.onModifierPick(choices, (picked) => {
+      this.applyModifier(picked);
+      this.modifierPickPending = false;
+      this.paused = false;
+    });
+  }
+
+  /** Apply a picked modifier's instant effects */
+  private applyModifier(mod: ModifierDef) {
+    this.activeModifiers.push(mod.id);
+    switch (mod.id) {
+      case 'tough':
+        this.player.maxHp += 3;
+        this.player.hp = this.player.maxHp;
+        break;
+      case 'speed':
+        this.player.baseSpeed += 25;
+        break;
+      case 'magplus':
+        this.player.magSize += 4;
+        break;
+      case 'dodge':
+        this.player.dodgeChance = 0.1;
+        break;
+      case 'corruption_resist':
+        this.player.corruptionResistMult = 0.75;
+        break;
+      case 'reload':
+        // Handled in weapon fire logic via hasMod check
+        break;
+    }
+    this.hud.showMessage(`+ ${mod.name.toUpperCase()}`, 2);
+  }
+
+  /** Check if a modifier is active */
+  hasMod(id: string): boolean { return this.activeModifiers.includes(id); }
+
+  /** Get damage multiplier from active modifiers */
+  getModDamageMult(enemy: { isElite?: boolean; targetingPlayer?: boolean }): number {
+    let mult = 1;
+    if (this.hasMod('elite_dmg') && enemy.isElite) mult *= 1.3;
+    if (this.hasMod('stalker') && !enemy.targetingPlayer) mult *= 1.4;
+    if (this.hasMod('pack_hunter')) {
+      const nearby = this.enemies.enemies.filter(e => v2dist(this.player.pos, e.pos) < 200).length;
+      mult *= 1 + nearby * 0.08;
+    }
+    if (this.hasMod('last_stand') && this.player.hp < 3) mult *= 1.5;
+    if (this.hasMod('precision') && this.player.justReloaded) mult *= 2;
+    if (this.hasMod('momentum')) mult *= 1 + this.momentumHits * 0.15;
+    return mult;
+  }
+
+  /** Get speed multiplier from active modifiers */
+  getModSpeedMult(): number {
+    let mult = 1;
+    if (this.hasMod('last_stand') && this.player.hp < 3) mult *= 1.3;
+    if (this.hasMod('adrenaline')) mult *= 1 + this.adrenalineStacks * 0.05;
+    return mult;
   }
 
   finishHunt(status: 'COMPLETED' | 'FAILED' | 'ABANDONED') {
