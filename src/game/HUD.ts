@@ -12,6 +12,8 @@ const FONT_MSG  = new TextStyle({ fontFamily: 'PixelOperator, monospace', fontSi
 const FONT_HAL_STRIP = new TextStyle({ fontFamily: 'PixelOperator, monospace', fontSize: 15, fill: 0xcc4422, letterSpacing: 1 });
 
 export class HUD {
+  _kitTexts: Text[] = [];
+  _kitNameTexts: Text[] = [];
   gfx: Graphics;
   hpText: Text;
   ammoText: Text;
@@ -21,7 +23,7 @@ export class HUD {
   timerText: Text;
   levelText: Text;
   messageText: Text;
-  halStripText: Text;     // HAL commentary strip — bottom center
+  halStripText: Text;     // HAL commentary strip â bottom center
   messageDuration = 0;
   halStripDuration = 0;
   viewW: number;
@@ -60,7 +62,7 @@ export class HUD {
     const L = 16;
     const R = this.viewW - 16;
 
-    // ── TOP-LEFT: VITAL SIGNS ──
+    // ââ TOP-LEFT: VITAL SIGNS ââ
     let y = 16;
 
     // HP bar
@@ -100,7 +102,7 @@ export class HUD {
     this.weaponText.x = L;
     this.weaponText.y = y;
 
-    // ── TOP-RIGHT: CORRUPTION + STATS ──
+    // ââ TOP-RIGHT: CORRUPTION + STATS ââ
     y = 16;
     const corrW = 130;
     const corrH = 16;
@@ -133,7 +135,7 @@ export class HUD {
     this.timerText.x = corrX;
     this.timerText.y = y;
 
-    // ── BOTTOM: XP BAR ──
+    // ââ BOTTOM: XP BAR ââ
     const xpH = 8;
     const xpY = this.viewH - xpH;
     const xpThreshold = player.level < MAX_LEVEL ? (XP_PER_LEVEL[player.level] ?? 999) : 210;
@@ -146,7 +148,7 @@ export class HUD {
     this.levelText.x = L;
     this.levelText.y = this.viewH - 30;
 
-    // ── KIT BUTTONS — bottom right ──
+    // Kit buttons - bottom right
     const kitBtnW = 72;
     const kitBtnH = 52;
     for (let i = 0; i < kits.length; i++) {
@@ -154,17 +156,47 @@ export class HUD {
       if (!kdef) continue;
       const kx = R - (kits.length - i) * (kitBtnW + 8);
       const ky = this.viewH - 70;
-      g.rect(kx, ky, kitBtnW, kitBtnH).fill({ color: 0x110800, alpha: 0.88 });
-      g.rect(kx, ky, kitBtnW, kitBtnH).stroke({ color: 0x993300, width: 1.5, alpha: 0.8 });
-      g.circle(kx + kitBtnW / 2, ky + kitBtnH / 2, 10).stroke({ color: 0xff4400, width: 1.5, alpha: 0.6 });
+      const cd = kitCooldowns[kits[i]] || 0;
+      const onCooldown = cd > 0;
+      const bgColor = onCooldown ? 0x080404 : 0x110800;
+      const borderColor = onCooldown ? 0x662200 : 0x993300;
+      g.rect(kx, ky, kitBtnW, kitBtnH).fill({ color: bgColor, alpha: 0.88 });
+      g.rect(kx, ky, kitBtnW, kitBtnH).stroke({ color: borderColor, width: 1.5, alpha: 0.8 });
+      // Cooldown overlay
+      if (onCooldown) {
+        const cdFrac = Math.min(cd / (kdef.cooldown || 1), 1);
+        g.rect(kx, ky + kitBtnH * (1 - cdFrac), kitBtnW, kitBtnH * cdFrac).fill({ color: 0x331100, alpha: 0.5 });
+      }
+      // Kit icon letter
+      if (!this._kitTexts) this._kitTexts = [];
+      if (!this._kitTexts[i]) {
+        this._kitTexts[i] = new Text({ text: '', style: FONT_DATA });
+        this._kitTexts[i].anchor = { x: 0.5, y: 0.5 } as any;
+        this.gfx.parent?.addChild(this._kitTexts[i]);
+      }
+      this._kitTexts[i].text = kdef.icon;
+      this._kitTexts[i].x = kx + kitBtnW / 2;
+      this._kitTexts[i].y = ky + kitBtnH / 2 - 6;
+      this._kitTexts[i].alpha = onCooldown ? 0.4 : 1;
+      // Kit name below icon
+      if (!this._kitNameTexts) this._kitNameTexts = [];
+      if (!this._kitNameTexts[i]) {
+        this._kitNameTexts[i] = new Text({ text: '', style: FONT_DIM });
+        this._kitNameTexts[i].anchor = { x: 0.5, y: 0 } as any;
+        this.gfx.parent?.addChild(this._kitNameTexts[i]);
+      }
+      this._kitNameTexts[i].text = onCooldown ? Math.ceil(cd) + 's' : kdef.name;
+      this._kitNameTexts[i].x = kx + kitBtnW / 2;
+      this._kitNameTexts[i].y = ky + kitBtnH + 2;
+      this._kitNameTexts[i].alpha = onCooldown ? 0.5 : 0.8;
     }
 
-    // ── SCAN LINES ──
+    // ââ SCAN LINES ââ
     for (let sl = 0; sl < this.viewH; sl += 4) {
       g.rect(0, sl, this.viewW, 1).fill({ color: 0x000000, alpha: 0.04 });
     }
 
-    // ── CORNER BRACKETS ──
+    // ââ CORNER BRACKETS ââ
     const bs = 28;
     const bc = 0xff2200;
     const ba = 0.25;
@@ -173,7 +205,7 @@ export class HUD {
     g.moveTo(0, this.viewH - bs).lineTo(0, this.viewH).lineTo(bs, this.viewH).stroke({ color: bc, width: 1.5, alpha: ba });
     g.moveTo(this.viewW - bs, this.viewH).lineTo(this.viewW, this.viewH).lineTo(this.viewW, this.viewH - bs).stroke({ color: bc, width: 1.5, alpha: ba });
 
-    // ── JOYSTICK ──
+    // ââ JOYSTICK ââ
     if (player.joyActive) {
       g.circle(player.joyBase.x, player.joyBase.y, 70).stroke({ color: 0xff2200, alpha: 0.18, width: 1.5 });
       g.circle(player.joyBase.x, player.joyBase.y, 45).stroke({ color: 0xff2200, alpha: 0.12, width: 1 });
@@ -183,7 +215,7 @@ export class HUD {
       g.circle(player.joyKnob.x, player.joyKnob.y, 18).stroke({ color: 0xff4400, alpha: 0.55, width: 2.5 });
     }
 
-    // ── CENTER MESSAGE ──
+    // ââ CENTER MESSAGE ââ
     if (this.messageDuration > 0) {
       this.messageDuration -= dt;
       this.messageText.x = this.viewW / 2;
@@ -193,7 +225,7 @@ export class HUD {
       this.messageText.alpha = 0;
     }
 
-    // ── HAL COMMENTARY STRIP — bottom center, above XP bar ──
+    // ââ HAL COMMENTARY STRIP â bottom center, above XP bar ââ
     if (this.halStripDuration > 0) {
       this.halStripDuration -= dt;
       const alpha = Math.min(this.halStripDuration, 1);
