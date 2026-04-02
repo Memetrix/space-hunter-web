@@ -12,6 +12,8 @@ import {
 } from './constants';
 import { CREATURE_DEFS } from '../data/creatures';
 import { type ModifierDef, rollModifiers } from '../data/modifiers';
+import { WEAPON_DEFS, WEAPON_LEVEL_PERKS } from '../data/weapons';
+import { KIT_DEFS } from '../data/kits';
 import {
   halSay,
   HAL_HUNT_START, HAL_WAVE_INCOMING, HAL_FIRST_KILL, HAL_KILL_STREAK,
@@ -51,7 +53,7 @@ function angleTo8Dir(vx: number, vy: number): string {
 // Sprites that have 8-direction folders
 const SPRITES_WITH_DIRS = ['player', 'void_leech', 'shadow_crawler', 'abyss_worm', 'nether_stalker', 'cave_lurker', 'tide_wraith'];
 
-// ── Void breach zone interface ──
+// ââ Void breach zone interface ââ
 interface VoidBreachZone {
   id: number;
   pos: { x: number; y: number };
@@ -61,7 +63,7 @@ interface VoidBreachZone {
   radius: number;
 }
 
-// ── Extraction cache interface ──
+// ââ Extraction cache interface ââ
 interface ExtractionCache {
   id: number;
   pos: { x: number; y: number };
@@ -88,6 +90,7 @@ export interface GameCallbacks {
   }) => void;
   /** Called between waves to let the player pick a modifier. Game is paused until resolved. */
   onModifierPick: (choices: ModifierDef[], resolve: (picked: ModifierDef) => void) => void;
+  onWeaponPerkPick: (perks: string[], weaponName: string, resolve: (picked: string) => void) => void;
 }
 
 export class Game {
@@ -120,6 +123,13 @@ export class Game {
 
   // Kit state
   kitCooldowns: Record<string, number> = {};
+
+  // Explosion effects
+  explosions: Array<{ x: number; y: number; radius: number; maxRadius: number; life: number; maxLife: number }> = [];
+
+  // Weapon leveling
+  weaponLevel = 0;
+  weaponPerkPending = false;
 
   // State
   elapsed = 0;
@@ -275,7 +285,7 @@ export class Game {
     this.hud.showMessage('HUNT STARTED', 2);
     setTimeout(() => this.hud.showHalMessage(halSay(HAL_HUNT_START), 5), 2500);
 
-    // ── Contract-specific setup ──
+    // ââ Contract-specific setup ââ
     if (this.contractType === 'void_breach') {
       this.spawnBreaches();
     }
@@ -291,7 +301,7 @@ export class Game {
     this.setupInput();
   }
 
-  // ── Extraction: spawn caches across the map ──
+  // ââ Extraction: spawn caches across the map ââ
   private spawnCaches() {
     this.caches = [];
     for (let i = 0; i < this.cacheCount; i++) {
@@ -318,7 +328,7 @@ export class Game {
     }
   }
 
-  // ── Void Breach: spawn sequential breach zones ──
+  // ââ Void Breach: spawn sequential breach zones ââ
   private spawnBreaches() {
     const BREACH_COUNT = 3;
     const perBreachTime = this.holdTime / BREACH_COUNT;
@@ -351,7 +361,7 @@ export class Game {
     this.hud.showMessage(`BREACH 1/${BREACH_COUNT} DETECTED`, 2);
   }
 
-  // ── Boss Hunt: spawn an apex enemy ──
+  // ââ Boss Hunt: spawn an apex enemy ââ
   private spawnApex() {
     if (this.apexSpawned) return;
     this.apexSpawned = true;
@@ -520,7 +530,27 @@ export class Game {
       e.preventDefault();
       const t = e.touches[0];
       const rect = canvas.getBoundingClientRect();
-      this.player.onTouchStart(t.clientX - rect.left, t.clientY - rect.top);
+      const tx = t.clientX - rect.left;
+      const ty = t.clientY - rect.top;
+      // Check kit button taps
+      const kitBtnW = 72;
+      const kitBtnH = 52;
+      const viewW = this.app.screen.width;
+      const viewH = this.app.screen.height;
+      const R = viewW - 16;
+      let kitTapped = false;
+      for (let i = 0; i < this.equippedKits.length; i++) {
+        const kx = R - (this.equippedKits.length - i) * (kitBtnW + 8);
+        const ky = viewH - 70;
+        if (tx >= kx && tx <= kx + kitBtnW && ty >= ky && ty <= ky + kitBtnH) {
+          this.activateKit(this.equippedKits[i]);
+          kitTapped = true;
+          break;
+        }
+      }
+      if (!kitTapped) {
+        this.player.onTouchStart(tx, ty);
+      }
     }, { passive: false });
 
     canvas.addEventListener('touchmove', (e) => {
@@ -539,8 +569,11 @@ export class Game {
     const onKey = (e: KeyboardEvent, down: boolean) => {
       if (down) {
         this.player.onKeyDown(e.key);
-        if (e.key.toLowerCase() === 'q') {
-          this.activateKit('stim_pack');
+        if (e.key.toLowerCase() === 'q' && this.equippedKits.length > 0) {
+          this.activateKit(this.equippedKits[0]);
+        }
+        if (e.key.toLowerCase() === 'e' && this.equippedKits.length > 1) {
+          this.activateKit(this.equippedKits[1]);
         }
       } else {
         this.player.onKeyUp(e.key);
@@ -554,13 +587,51 @@ export class Game {
   activateKit(kitId: string) {
     if (!this.equippedKits.includes(kitId)) return;
     if ((this.kitCooldowns[kitId] || 0) > 0) return;
+    const kdef = KIT_DEFS[kitId];
+    if (!kdef) return;
 
-    if (kitId === 'stim_pack') {
-      this.player.heal(4);
-      this.player.corruption = Math.min(100, this.player.corruption + 15);
-      this.kitCooldowns[kitId] = 8;
-      this.hud.showMessage('STIM USED', 1.5);
+    switch (kitId) {
+      case 'stim_pack':
+        this.player.heal(4);
+        this.player.corruption = Math.min(100, this.player.corruption + 15);
+        break;
+      case 'flash_trap':
+        // Damage all enemies within 80px
+        for (const e of this.enemies.enemies) {
+          if (v2dist(this.player.pos, e.pos) < 80) {
+            e.hp -= 3;
+            e.hitFlash = 0.3;
+            if (e.hp <= 0) this.onEnemyKilled(e);
+          }
+        }
+        this.explosions.push({ x: this.player.pos.x, y: this.player.pos.y, radius: 0, maxRadius: 80, life: 0.3, maxLife: 0.3 });
+        break;
+      case 'blink_kit': {
+        // Teleport 200px in facing direction
+        const blinkDist = 200;
+        const aim = this.player.nearestEnemyPos;
+        if (aim) {
+          const dx = aim.x - this.player.pos.x;
+          const dy = aim.y - this.player.pos.y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > 0) {
+            this.player.pos.x += (dx / dist) * blinkDist;
+            this.player.pos.y += (dy / dist) * blinkDist;
+          }
+        } else {
+          this.player.pos.y -= blinkDist;
+        }
+        // Clamp to world
+        this.player.pos.x = Math.max(0, Math.min(WORLD_W, this.player.pos.x));
+        this.player.pos.y = Math.max(0, Math.min(WORLD_H, this.player.pos.y));
+        break;
+      }
+      default:
+        this.hud.showMessage(kdef.name.toUpperCase() + ' USED', 1.5);
+        break;
     }
+    this.kitCooldowns[kitId] = kdef.cooldown;
+    this.hud.showMessage(kdef.name.toUpperCase() + ' USED', 1.5);
   }
 
   update(dt: number) {
@@ -655,9 +726,14 @@ export class Game {
     }
 
     // Deferred level-up modifier pick
-    if (this.pendingLevelUpPicks > 0 && !this.modifierPickPending && this.activeModifiers.length < 12) {
+    if (this.pendingLevelUpPicks > 0 && !this.modifierPickPending && !this.weaponPerkPending && this.activeModifiers.length < 12) {
       this.pendingLevelUpPicks--;
-      this.offerModifierPick();
+      // Alternate: odd levels get weapon perk, even get generic modifier
+      if (this.weaponLevel > 0 && this.weaponLevel <= 5) {
+        this.offerWeaponPerk();
+      } else {
+        this.offerModifierPick();
+      }
     }
 
     // Camera
@@ -682,7 +758,7 @@ export class Game {
     // Enemies update
     this.enemies.update(dt, this.player, this.map);
 
-    // ── Payload escort: enemies damage pod ──
+    // ââ Payload escort: enemies damage pod ââ
     if (this.contractType === 'payload_escort' && this.podHp > 0) {
       const podX = WORLD_W * this.podProgress;
       const podY = WORLD_H / 2;
@@ -730,13 +806,22 @@ export class Game {
     // Remove expired bullets
     this.weapons.bullets = this.weapons.bullets.filter(b => b.life > 0);
 
+    // Update explosions
+    for (let i = this.explosions.length - 1; i >= 0; i--) {
+      const ex = this.explosions[i];
+      ex.life -= dt;
+      const progress = 1 - (ex.life / ex.maxLife);
+      ex.radius = ex.maxRadius * progress;
+      if (ex.life <= 0) this.explosions.splice(i, 1);
+    }
+
     // Adrenaline timer (for modifier)
     if (this.adrenalineTimer > 0) {
       this.adrenalineTimer -= dt;
       if (this.adrenalineTimer <= 0) this.adrenalineKills = 0;
     }
 
-    // ── Extraction: cache collection ──
+    // ââ Extraction: cache collection ââ
     if (this.contractType === 'extraction_run') {
       for (const cache of this.caches) {
         if (cache.collected) continue;
@@ -750,7 +835,7 @@ export class Game {
       }
     }
 
-    // ── Boss Hunt: spawn apex after wave 2 ──
+    // ââ Boss Hunt: spawn apex after wave 2 ââ
     if (this.contractType === 'boss_hunt' && !this.apexSpawned && this.waveCount >= 2) {
       this.spawnApex();
     }
@@ -782,7 +867,7 @@ export class Game {
       setTimeout(() => this.finishHunt('FAILED'), 2000);
     }
 
-    // ── Contract completion checks ──
+    // ââ Contract completion checks ââ
 
     // VOID BREACH: sequential breach zones
     if (this.contractType === 'void_breach' && !this.complete && this.breaches.length > 0) {
@@ -898,7 +983,7 @@ export class Game {
     this.worldLayer.y = -this.camera.y;
 
     // HUD
-    this.hud.draw(this.player, dt, this.totalKills, this.elapsed, this.equippedKits);
+    this.hud.draw(this.player, dt, this.totalKills, this.elapsed, this.equippedKits, this.kitCooldowns);
   }
 
   private onEnemyKilled(enemy: Enemy) {
@@ -961,6 +1046,8 @@ export class Game {
         this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
         // Queue modifier pick for next update tick
         this.pendingLevelUpPicks++;
+        // Also increment weapon level for perk choice
+        this.weaponLevel++;
       }
     }
 
@@ -1036,7 +1123,7 @@ export class Game {
     const pAlpha = this.player.iFrames > 0 ? 0.4 : 1;
     const hit = this.player.hitFlash > 0;
 
-    // ── Payload escort pod rendering ──
+    // ââ Payload escort pod rendering ââ
     if (this.contractType === 'payload_escort' && this.podHp > 0) {
       const podX = WORLD_W * this.podProgress;
       const podY = WORLD_H / 2;
@@ -1068,7 +1155,7 @@ export class Game {
       }
     }
 
-    // ── Void breach zones rendering ──
+    // ââ Void breach zones rendering ââ
     if (this.contractType === 'void_breach') {
       for (const breach of this.breaches) {
         const bx = breach.pos.x, by = breach.pos.y;
@@ -1134,7 +1221,7 @@ export class Game {
       }
     }
 
-    // ── Extraction caches rendering ──
+    // ââ Extraction caches rendering ââ
     if (this.contractType === 'extraction_run') {
       for (const cache of this.caches) {
         if (cache.collected) continue;
@@ -1168,7 +1255,7 @@ export class Game {
       }
     }
 
-    // ── Boss Hunt apex indicator ──
+    // ââ Boss Hunt apex indicator ââ
     if (this.contractType === 'boss_hunt' && this.apexSpawned) {
       const apex = this.enemies.enemies.find(e => e.id === this.apexId);
       if (apex) {
@@ -1286,6 +1373,16 @@ export class Game {
       g.circle(b.pos.x, b.pos.y, b.radius * 0.8).fill({ color: 0xffffff, alpha: 0.6 });
     }
 
+    // Draw explosions
+    for (const ex of this.explosions) {
+      if (!this.camera.isVisible(ex.x, ex.y, ex.maxRadius)) continue;
+      const alpha = ex.life / ex.maxLife;
+      g.circle(ex.x, ex.y, ex.radius).fill({ color: 0xffaa00, alpha: alpha * 0.15 });
+      g.circle(ex.x, ex.y, ex.radius * 0.7).fill({ color: 0xff6600, alpha: alpha * 0.3 });
+      g.circle(ex.x, ex.y, ex.radius * 0.3).fill({ color: 0xffffff, alpha: alpha * 0.5 });
+      g.circle(ex.x, ex.y, ex.radius).stroke({ color: 0xff4400, width: 2, alpha: alpha * 0.6 });
+    }
+
     for (const b of this.enemies.enemyBullets) {
       if (!this.camera.isVisible(b.pos.x, b.pos.y, b.radius * 3)) continue;
       g.circle(b.pos.x, b.pos.y, b.radius * 2.5).fill({ color: 0xff0000, alpha: 0.12 });
@@ -1304,6 +1401,29 @@ export class Game {
       this.applyModifier(picked);
       this.modifierPickPending = false;
       this.paused = false;
+    });
+  }
+
+  /** Pause game and let player pick a weapon perk */
+  private offerWeaponPerk() {
+    const perks = WEAPON_LEVEL_PERKS[this.player.weaponId];
+    if (!perks || this.weaponLevel < 1 || this.weaponLevel > perks.length) {
+      this.offerModifierPick();
+      return;
+    }
+    // Offer 2 random perks from the weapon's perk list
+    const available = perks.filter((_, i) => i < this.weaponLevel + 2);
+    const shuffled = [...available].sort(() => Math.random() - 0.5);
+    const choices = shuffled.slice(0, Math.min(3, shuffled.length));
+    if (choices.length === 0) { this.offerModifierPick(); return; }
+    const weaponDef = WEAPON_DEFS[this.player.weaponId];
+    this.weaponPerkPending = true;
+    this.paused = true;
+    this.callbacks.onWeaponPerkPick(choices, weaponDef?.name || 'Weapon', (picked) => {
+      this.activeModifiers.push('wperk_' + picked);
+      this.weaponPerkPending = false;
+      this.paused = false;
+      this.hud.showMessage('+ ' + picked.toUpperCase(), 2);
     });
   }
 
