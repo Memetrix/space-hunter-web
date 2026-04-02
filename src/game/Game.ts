@@ -3,30 +3,28 @@ import { Camera } from './Camera';
 import { GameMap } from './Map';
 import { Player } from './Player';
 import { WeaponSystem } from './Weapons';
-import { EnemySystem, type Enemy } from './Enemies';
+import { EnemySystem, type Enemy, createEnemy } from './Enemies';
 import { HUD } from './HUD';
-import { v2dist } from '../lib/math';
-import { PLAYER_BASE_HP, PLAYER_BASE_SPEED, WORLD_W, WORLD_H, PLAYER_COLOR, XP_PER_LEVEL, MAX_LEVEL } from './constants';
+import { v2dist, v2, randRange } from '../lib/math';
+import {
+  PLAYER_BASE_HP, PLAYER_BASE_SPEED, WORLD_W, WORLD_H,
+  PLAYER_COLOR, XP_PER_LEVEL, MAX_LEVEL
+} from './constants';
 import { CREATURE_DEFS } from '../data/creatures';
-
-const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
-
-const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
 import { type ModifierDef, rollModifiers } from '../data/modifiers';
 import {
   halSay,
   HAL_HUNT_START, HAL_WAVE_INCOMING, HAL_FIRST_KILL, HAL_KILL_STREAK,
   HAL_ELITE_SPAWNED, HAL_LOW_HP, HAL_CRITICAL_HP, HAL_TOOK_DAMAGE,
   HAL_CORRUPTION_VALLEY, HAL_CORRUPTION_CORRUPT, HAL_CORRUPTION_VOID,
-  HAL_OBJECTIVE_HALF, HAL_OBJECTIVE_NEAR,
-  HAL_LEVEL_UP, HAL_PLAYER_DIED, HAL_CONTRACT_DONE,
-  HAL_RELOAD,
+  HAL_OBJECTIVE_HALF, HAL_OBJECTIVE_NEAR, HAL_LEVEL_UP,
+  HAL_PLAYER_DIED, HAL_CONTRACT_DONE, HAL_RELOAD,
 } from '../data/hal';
 
 // Sprite base path for GitHub Pages support
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
 
-// Sprite name → creature name mapping
+// Sprite name -> creature name mapping
 const CREATURE_SPRITE_MAP: Record<string, string> = {
   'Void Leech': 'void_leech',
   'Shadow Crawler': 'shadow_crawler',
@@ -38,17 +36,13 @@ const CREATURE_SPRITE_MAP: Record<string, string> = {
   'Void Spawn': 'void_spawn',
 };
 
-// 8-direction system — PixelLab order matches atan2 when we flip east/west
-// atan2(vy,vx): 0=right, PI/2=down, PI=left, -PI/2=up
-// Map: index 0=east(right), 1=SE, 2=south(down), 3=SW, 4=west(left), 5=NW, 6=north(up), 7=NE
+// 8-direction system
 const DIR_NAMES = ['east', 'south-east', 'south', 'south-west', 'west', 'north-west', 'north', 'north-east'] as const;
 
 /** Convert velocity to one of 8 direction names */
 function angleTo8Dir(vx: number, vy: number): string {
   if (vx === 0 && vy === 0) return 'south';
-  // atan2 gives: 0=right, +PI/2=down, ±PI=left, -PI/2=up
   const angle = Math.atan2(vy, vx);
-  // Normalize to 0..2PI then quantize to 8 sectors
   const norm = ((angle % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   const sector = Math.round(norm / (Math.PI / 4)) % 8;
   return DIR_NAMES[sector];
@@ -57,13 +51,29 @@ function angleTo8Dir(vx: number, vy: number): string {
 // Sprites that have 8-direction folders
 const SPRITES_WITH_DIRS = ['player', 'void_leech', 'shadow_crawler', 'abyss_worm', 'nether_stalker', 'cave_lurker', 'tide_wraith'];
 
+// ── Extraction cache interface ──
+interface ExtractionCache {
+  id: number;
+  pos: { x: number; y: number };
+  collected: boolean;
+  radius: number;
+}
+
+let nextCacheId = 1;
+
 export interface GameCallbacks {
   onDeath: () => void;
   onComplete: () => void;
   onHuntResult: (result: {
-    credits: number; corruption: number; timeSurvived: number;
-    totalKills: number; eliteKills: number; apexKills: number;
-    peakCorruption: number; damageDealt: number; damageTaken: number;
+    credits: number;
+    corruption: number;
+    timeSurvived: number;
+    totalKills: number;
+    eliteKills: number;
+    apexKills: number;
+    peakCorruption: number;
+    damageDealt: number;
+    damageTaken: number;
     ingredients: Array<{ id: string; name: string }>;
   }) => void;
   /** Called between waves to let the player pick a modifier. Game is paused until resolved. */
@@ -90,16 +100,13 @@ export class Game {
   spriteLayer: Container;
   hudLayer: Container;
 
-  // Sprite textures: key = "name/direction" for stills, "name/walk/direction/N" for anim frames
+  // Sprite textures
   textures: Record<string, Texture> = {};
   spritePool: Map<number, Sprite> = new Map();
   playerSprite: Sprite | null = null;
-  animFrame = 0;       // global animation frame counter
-  animTimer = 0;       // time accumulator for frame stepping
-  animFPS = 8;         // animation playback speed
-
-  // Kit state
-  kitCooldowns: Record<string, number> = {};
+  animFrame = 0;
+  animTimer = 0;
+  animFPS = 8;
 
   // Kit state
   kitCooldowns: Record<string, number> = {};
@@ -110,6 +117,7 @@ export class Game {
   waveCount = 0;
   totalKills = 0;
   eliteKills = 0;
+  apexKills = 0;
   damageDealt = 0;
   damageTaken = 0;
   peakCorruption = 0;
@@ -125,44 +133,53 @@ export class Game {
   magBonus = 0;
 
   // Contract-specific state
-  holdTime = 0;          // void_breach: seconds remaining
-  holdTimer = 0;         // void_breach: seconds held so far
-  holdZoneActive = false; // void_breach: player in hold zone
-  podHp = 0;             // payload_escort: pod HP
-  podMaxHp = 0;
-  podProgress = 0;       // payload_escort: 0→1 delivery progress
-  cacheCount = 0;        // extraction_run: total caches
-  cachesCollected = 0;   // extraction_run: collected so far
+  holdTime = 0;       // void_breach: seconds required
+  holdTimer = 0;      // void_breach: seconds held so far
+  holdZoneActive = false;
 
-  // Kit cooldown tracking
-  kitCooldowns: Record<string, number> = {};
+  podHp = 0;          // payload_escort: pod HP
+  podMaxHp = 0;
+  podProgress = 0;    // payload_escort: 0->1 delivery progress
+
+  cacheCount = 0;     // extraction_run: total caches
+  cachesCollected = 0;
+  caches: ExtractionCache[] = [];  // extraction_run: spawned cache positions
+
+  // Boss hunt state
+  apexSpawned = false; // boss_hunt: has the apex target been spawned?
+  apexId = -1;         // boss_hunt: enemy id of the apex
 
   // Active modifiers
   activeModifiers: string[] = [];
-  modifierPickPending = false;     // true while waiting for player to choose
-  pendingLevelUpPicks = 0;          // queued from onEnemyKilled, resolved in update
-  adrenalineKills = 0;             // kills within 3s window for adrenaline
+  modifierPickPending = false;
+  pendingLevelUpPicks = 0;
+  adrenalineKills = 0;
   adrenalineTimer = 0;
   adrenalineStacks = 0;
-  momentumHits = 0;                // consecutive hits for momentum
-  killsSinceLastHeal = 0;          // counter for vamp
+  momentumHits = 0;
+  killsSinceLastHeal = 0;
 
   // HAL event tracking
-  halCooldown = 0;              // global cooldown between HAL messages
-  halReloadSaid = false;        // don't spam reload messages
-  halLowHpSaid = false;         // one low-HP warning per danger window
+  halCooldown = 0;
+  halReloadSaid = false;
+  halLowHpSaid = false;
   halCriticalHpSaid = false;
   halCorruptionValleySaid = false;
   halCorruptionCorruptSaid = false;
   halCorruptionVoidSaid = false;
-  halKillStreakTimer = 0;       // comment on sustained killing
+  halKillStreakTimer = 0;
   halKillsSinceStreak = 0;
   halHalfSaid = false;
   halNearSaid = false;
 
   constructor(
-    app: Application, kits: string[], contractType: string, targetTotal: number,
-    hpBonus: number, magBonus: number, callbacks: GameCallbacks,
+    app: Application,
+    kits: string[],
+    contractType: string,
+    targetTotal: number,
+    hpBonus: number,
+    magBonus: number,
+    callbacks: GameCallbacks,
     contractExtras?: { holdTime?: number; podHp?: number; cacheCount?: number }
   ) {
     this.app = app;
@@ -220,12 +237,12 @@ export class Game {
     this.worldLayer.addChild(this.spriteLayer);
     this.worldLayer.addChild(this.entityGfx);
     this.worldLayer.addChild(this.bulletGfx);
-
     app.stage.addChild(this.worldLayer);
     app.stage.addChild(this.hudLayer);
 
     // Load sprite textures (non-blocking)
     this.loadSprites();
+
     this.hudLayer.addChild(this.hud.gfx);
     this.hudLayer.addChild(this.hud.hpText);
     this.hudLayer.addChild(this.hud.ammoText);
@@ -245,17 +262,99 @@ export class Game {
     this.hud.showMessage('HUNT STARTED', 2);
     setTimeout(() => this.hud.showHalMessage(halSay(HAL_HUNT_START), 5), 2500);
 
+    // ── Contract-specific setup ──
+    if (this.contractType === 'extraction_run') {
+      this.spawnCaches();
+    }
+    if (this.contractType === 'boss_hunt') {
+      // Spawn the apex enemy after a short delay (wave 2)
+      this.apexSpawned = false;
+    }
+
     // Input
     this.setupInput();
   }
 
+  // ── Extraction: spawn caches across the map ──
+  private spawnCaches() {
+    this.caches = [];
+    for (let i = 0; i < this.cacheCount; i++) {
+      let pos: { x: number; y: number };
+      let attempts = 0;
+      do {
+        pos = {
+          x: randRange(200, WORLD_W - 200),
+          y: randRange(200, WORLD_H - 200),
+        };
+        attempts++;
+        // Ensure caches aren't too close to player or each other
+      } while (
+        (v2dist(pos, this.player.pos) < 600 ||
+          this.caches.some(c => v2dist(pos, c.pos) < 400)) &&
+        attempts < 30
+      );
+      this.caches.push({
+        id: nextCacheId++,
+        pos,
+        collected: false,
+        radius: 30,
+      });
+    }
+  }
+
+  // ── Boss Hunt: spawn an apex enemy ──
+  private spawnApex() {
+    if (this.apexSpawned) return;
+    this.apexSpawned = true;
+
+    // Spawn far from player
+    let pos: { x: number; y: number };
+    let attempts = 0;
+    do {
+      pos = {
+        x: randRange(200, WORLD_W - 200),
+        y: randRange(200, WORLD_H - 200),
+      };
+      attempts++;
+    } while (v2dist(pos, this.player.pos) < 800 && attempts < 30);
+
+    // Create a super-powered enemy based on Cave Lurker (tankiest base creature)
+    const apex = createEnemy('Cave Lurker', pos, true);
+    apex.hp = 60 + this.targetTotal * 10;  // Very tanky
+    apex.maxHp = apex.hp;
+    apex.speed = 90;
+    apex.meleeDmg = 4;
+    apex.radius = 28;
+    apex.detection = 600;
+    apex.isElite = true;
+    apex.isTarget = true;
+    apex.leash = 9999; // Never gives up
+    this.apexId = apex.id;
+    this.enemies.enemies.push(apex);
+
+    this.hud.showMessage('APEX TARGET DETECTED', 2.5);
+    if (this.halCooldown <= 0) {
+      setTimeout(() => this.hud.showHalMessage(halSay(HAL_ELITE_SPAWNED), 4), 1500);
+      this.halCooldown = 6;
+    }
+  }
+
   private async loadSprites() {
     const ANIM_NAMES: Record<string, string> = {
-      player: 'walking', void_leech: 'running-4-frames', shadow_crawler: 'running-4-frames',
-      abyss_worm: 'running-4-frames', nether_stalker: 'running-4-frames', cave_lurker: 'running-4-frames',
+      player: 'walking',
+      void_leech: 'running-4-frames',
+      shadow_crawler: 'running-4-frames',
+      abyss_worm: 'running-4-frames',
+      nether_stalker: 'running-4-frames',
+      cave_lurker: 'running-4-frames',
     };
     const FRAME_COUNTS: Record<string, number> = {
-      player: 6, void_leech: 4, shadow_crawler: 4, abyss_worm: 4, nether_stalker: 4, cave_lurker: 4,
+      player: 6,
+      void_leech: 4,
+      shadow_crawler: 4,
+      abyss_worm: 4,
+      nether_stalker: 4,
+      cave_lurker: 4,
     };
 
     const loadBatch = async (batch: Array<{ key: string; url: string }>) => {
@@ -270,7 +369,7 @@ export class Game {
       }
     };
 
-    // Phase 1: rotation stills + singles + obstacles — game starts after these
+    // Phase 1: rotation stills + singles + obstacles
     const phase1: Array<{ key: string; url: string }> = [];
     for (const name of SPRITES_WITH_DIRS) {
       for (const dir of DIR_NAMES) {
@@ -280,7 +379,6 @@ export class Game {
     for (const name of ['rift_parasite', 'void_spawn', 'bullet_player', 'bullet_enemy', 'hal_eye', 'explosion', 'essence_orb']) {
       phase1.push({ key: name, url: `${BASE}/sprites/${name}.png` });
     }
-    // Obstacle sprites
     for (const name of ['obs_asteroid', 'obs_crystal', 'obs_debris']) {
       phase1.push({ key: name, url: `${BASE}/sprites/obstacles/${name}.png` });
     }
@@ -306,12 +404,10 @@ export class Game {
       spr.anchor.set(0.5, 0.5);
       spr.x = obs.pos.x;
       spr.y = obs.pos.y;
-      // Scale sprite to match obstacle size
       const scaleX = obs.w / 64;
       const scaleY = obs.h / 64;
       spr.scale.set(Math.max(scaleX, scaleY));
       spr.roundPixels = true;
-      // Random rotation for variety
       spr.rotation = Math.random() * Math.PI * 2;
       this.obstacleLayer.addChild(spr);
     }
@@ -334,19 +430,16 @@ export class Game {
   private getOrCreateEnemySprite(enemy: Enemy): Sprite | null {
     const texBase = CREATURE_SPRITE_MAP[enemy.name];
     if (!texBase) return null;
-
-    // Determine direction from velocity
     const dir = angleTo8Dir(enemy.vel.x, enemy.vel.y);
     const dirKey = `${texBase}/${dir}`;
     const fallbackKey = `${texBase}/south`;
-    const singleKey = texBase; // for sprites without 8-dirs (rift_parasite, void_spawn)
-
+    const singleKey = texBase;
     const tex = this.textures[dirKey] || this.textures[fallbackKey] || this.textures[singleKey];
     if (!tex) return null;
 
     if (this.spritePool.has(enemy.id)) {
       const spr = this.spritePool.get(enemy.id)!;
-      spr.texture = tex; // swap direction texture
+      spr.texture = tex;
       return spr;
     }
 
@@ -397,7 +490,6 @@ export class Game {
     const onKey = (e: KeyboardEvent, down: boolean) => {
       if (down) {
         this.player.onKeyDown(e.key);
-        // Handle kit activation (Q = stim pack)
         if (e.key.toLowerCase() === 'q') {
           this.activateKit('stim_pack');
         }
@@ -405,22 +497,19 @@ export class Game {
         this.player.onKeyUp(e.key);
       }
     };
-    window.addEventListener('keydown', (e) => {
-      if (e.key === 'q' || e.key === 'Q') this.activateKit('stim_pack');
-      onKey(e, true);
-    });
+
+    window.addEventListener('keydown', (e) => onKey(e, true));
     window.addEventListener('keyup', (e) => onKey(e, false));
   }
 
-  private activateKit(kitId: string) {
+  activateKit(kitId: string) {
     if (!this.equippedKits.includes(kitId)) return;
-    if (this.kitCooldowns[kitId] && this.kitCooldowns[kitId] > 0) return;
+    if ((this.kitCooldowns[kitId] || 0) > 0) return;
 
     if (kitId === 'stim_pack') {
-      // Heal 4 HP, add 15 corruption
-      this.player.hp = Math.min(this.player.hp + 4, this.player.maxHp);
+      this.player.heal(4);
       this.player.corruption = Math.min(100, this.player.corruption + 15);
-      this.kitCooldowns['stim_pack'] = 8;
+      this.kitCooldowns[kitId] = 8;
       this.hud.showMessage('STIM USED', 1.5);
     }
   }
@@ -463,7 +552,6 @@ export class Game {
       this.hud.showHalMessage(halSay(HAL_LOW_HP), 4);
       this.halCooldown = 10;
     } else if (hpFrac > 0.6) {
-      // Reset warnings when healed
       this.halLowHpSaid = false;
       this.halCriticalHpSaid = false;
     }
@@ -484,7 +572,7 @@ export class Game {
       this.halCooldown = 8;
     }
 
-    // HAL: Reload commentary (rare, not every reload)
+    // HAL: Reload commentary
     if (this.player.reloadTimer > 0 && !this.halReloadSaid && Math.random() < 0.12 && this.halCooldown <= 0) {
       this.halReloadSaid = true;
       this.hud.showHalMessage(halSay(HAL_RELOAD), 2);
@@ -504,33 +592,23 @@ export class Game {
       this.halCooldown = 6;
     }
 
-    // HAL: Kill streak (fires if kills happen in rapid succession)
+    // HAL: Kill streak
     if (this.halKillsSinceStreak >= 5 && this.halKillStreakTimer <= 0 && this.halCooldown <= 0) {
       this.halKillsSinceStreak = 0;
       this.hud.showHalMessage(halSay(HAL_KILL_STREAK), 3);
       this.halCooldown = 8;
     }
 
-    // HAL: took damage (detect hit flash transition, random chance to comment)
+    // HAL: took damage
     if (this.player.hitFlash > 0.12 && this.halCooldown <= 0 && Math.random() < 0.18) {
       this.hud.showHalMessage(halSay(HAL_TOOK_DAMAGE), 2);
       this.halCooldown = 4;
     }
 
-    // Deferred level-up modifier pick (one per tick, drains queue)
+    // Deferred level-up modifier pick
     if (this.pendingLevelUpPicks > 0 && !this.modifierPickPending && this.activeModifiers.length < 12) {
       this.pendingLevelUpPicks--;
       this.offerModifierPick();
-    }
-
-    // Kit cooldowns
-    for (const k of Object.keys(this.kitCooldowns)) {
-      if (this.kitCooldowns[k] > 0) this.kitCooldowns[k] -= dt;
-    }
-
-    // Kit cooldowns
-    for (const k of Object.keys(this.kitCooldowns)) {
-      if (this.kitCooldowns[k] > 0) this.kitCooldowns[k] -= dt;
     }
 
     // Camera
@@ -555,6 +633,28 @@ export class Game {
     // Enemies update
     this.enemies.update(dt, this.player, this.map);
 
+    // ── Payload escort: enemies damage pod ──
+    if (this.contractType === 'payload_escort' && this.podHp > 0) {
+      const podX = WORLD_W * this.podProgress;
+      const podY = WORLD_H / 2;
+      for (const e of this.enemies.enemies) {
+        if (!e.isAggroed) continue;
+        const distToPod = v2dist(e.pos, { x: podX, y: podY });
+        if (distToPod < 60 + e.radius && e.meleeCooldown <= 0) {
+          this.podHp -= e.meleeDmg;
+          e.meleeCooldown = 1.5; // Shared cooldown with player melee
+        }
+      }
+      // Enemy bullets also damage pod
+      for (let i = this.enemies.enemyBullets.length - 1; i >= 0; i--) {
+        const b = this.enemies.enemyBullets[i];
+        if (v2dist(b.pos, { x: podX, y: podY }) < 25 + b.radius) {
+          this.podHp -= b.damage;
+          this.enemies.enemyBullets.splice(i, 1);
+        }
+      }
+    }
+
     // Player bullets update
     this.weapons.update(dt, this.enemies.enemies.map(e => ({ pos: e.pos, id: e.id })));
 
@@ -568,7 +668,6 @@ export class Game {
           enemy.hitFlash = 0.1;
           enemy.isAggroed = true;
           this.damageDealt += dmg;
-
           if (enemy.hp <= 0) {
             this.onEnemyKilled(enemy);
           }
@@ -588,6 +687,25 @@ export class Game {
       if (this.adrenalineTimer <= 0) this.adrenalineKills = 0;
     }
 
+    // ── Extraction: cache collection ──
+    if (this.contractType === 'extraction_run') {
+      for (const cache of this.caches) {
+        if (cache.collected) continue;
+        if (v2dist(this.player.pos, cache.pos) < cache.radius + this.player.radius) {
+          cache.collected = true;
+          this.cachesCollected++;
+          this.hud.showMessage(`CACHE ${this.cachesCollected}/${this.cacheCount}`, 1.5);
+          // Grant bonus ingredient
+          this.ingredients.push({ id: `cache_loot_${cache.id}`, name: 'Cache Contents' });
+        }
+      }
+    }
+
+    // ── Boss Hunt: spawn apex after wave 2 ──
+    if (this.contractType === 'boss_hunt' && !this.apexSpawned && this.waveCount >= 2) {
+      this.spawnApex();
+    }
+
     // Waves
     this.waveTimer -= dt;
     if (this.waveTimer <= 0 && this.enemies.enemies.length < 50 && !this.modifierPickPending) {
@@ -601,7 +719,7 @@ export class Game {
         this.halCooldown = 5;
       }
 
-      // Offer modifier pick every 2nd wave (wave 2, 4, 6...)
+      // Offer modifier pick every 2nd wave
       if (this.waveCount > 0 && this.waveCount % 2 === 0 && this.activeModifiers.length < 6) {
         this.offerModifierPick();
       }
@@ -615,17 +733,15 @@ export class Game {
       setTimeout(() => this.finishHunt('FAILED'), 2000);
     }
 
-    // ── Contract-type-specific updates & completion ──
+    // ── Contract completion checks ──
 
     // VOID BREACH: hold zone timer
     if (this.contractType === 'void_breach' && !this.complete) {
-      // Player must stay near center of map (simplified hold zone)
       const cx = WORLD_W / 2, cy = WORLD_H / 2;
       const distToCenter = v2dist(this.player.pos, { x: cx, y: cy });
       this.holdZoneActive = distToCenter < 300;
       if (this.holdZoneActive) {
         this.holdTimer += dt;
-        // Corruption builds faster in hold zone
         this.player.corruption = Math.min(100, this.player.corruption + 3.0 * this.player.corruptionResistMult * dt);
       }
       if (this.holdTimer >= this.holdTime) {
@@ -636,11 +752,11 @@ export class Game {
       }
     }
 
-    // PAYLOAD ESCORT: pod moves toward exit, player must stay near
+    // PAYLOAD ESCORT: pod moves toward exit
     if (this.contractType === 'payload_escort' && !this.complete) {
       const podX = WORLD_W * this.podProgress;
       const podY = WORLD_H / 2;
-      const podSpeed = 40; // px/s
+      const podSpeed = 40;
       const nearPlayer = v2dist(this.player.pos, { x: podX, y: podY }) < 250;
       if (nearPlayer && this.podHp > 0) {
         this.podProgress += (podSpeed / WORLD_W) * dt;
@@ -652,23 +768,36 @@ export class Game {
         setTimeout(() => this.finishHunt('COMPLETED'), 2000);
       }
       if (this.podHp <= 0 && !this.complete) {
+        this.complete = true;
         this.hud.showMessage('POD DESTROYED', 2);
         setTimeout(() => this.finishHunt('FAILED'), 2000);
       }
     }
 
     // HUNT & BOSS HUNT: kill target count
-    if ((this.contractType === 'hunt' || this.contractType === 'boss_hunt') && this.targetCount >= this.targetTotal && !this.complete) {
+    if (this.contractType === 'hunt' && this.targetCount >= this.targetTotal && !this.complete) {
       this.complete = true;
       this.hud.showMessage('CONTRACT COMPLETE', 2);
       this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
       setTimeout(() => this.finishHunt('COMPLETED'), 2000);
     }
 
-    // EXTRACTION RUN: collect caches (simplified — caches spawn as special map points)
+    // BOSS HUNT: apex must be killed specifically
+    if (this.contractType === 'boss_hunt' && this.apexSpawned && !this.complete) {
+      const apexAlive = this.enemies.enemies.some(e => e.id === this.apexId);
+      if (!apexAlive) {
+        this.complete = true;
+        this.apexKills++;
+        this.hud.showMessage('APEX ELIMINATED', 2.5);
+        this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
+        setTimeout(() => this.finishHunt('COMPLETED'), 2000);
+      }
+    }
+
+    // EXTRACTION RUN: collect all caches
     if (this.contractType === 'extraction_run' && this.cachesCollected >= this.cacheCount && this.cacheCount > 0 && !this.complete) {
       this.complete = true;
-      this.hud.showMessage('CACHES COLLECTED', 2);
+      this.hud.showMessage('ALL CACHES COLLECTED', 2);
       this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
       setTimeout(() => this.finishHunt('COMPLETED'), 2000);
     }
@@ -680,10 +809,8 @@ export class Game {
     this.updateSprites();
     this.cleanupDeadSprites();
 
-    // Draw entity overlays (glow, HP bars, aim line)
+    // Draw entity overlays
     this.drawEntities();
-
-    // Draw bullets
     this.drawBullets();
 
     // Update camera on world layer
@@ -699,27 +826,19 @@ export class Game {
     this.targetCount++;
     this.player.essenceCollected++;
     this.halKillsSinceStreak++;
-    this.halKillStreakTimer = 4; // reset 4s streak window
+    this.halKillStreakTimer = 4;
 
-    // ── Modifier effects on kill ──
+    // Modifier effects on kill
     const isVoidEnemy = enemy.voidType;
-
-    // Void Hunger: kill void → +1 HP
     if (this.hasMod('void_hunger') && isVoidEnemy) {
       this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
     }
-
-    // Void Drain: kill void → −3 corruption
     if (this.hasMod('void_drain') && isVoidEnemy) {
       this.player.corruption = Math.max(0, this.player.corruption - 3);
     }
-
-    // Scavenger: ingredient drops also give +1 essence
     if (this.hasMod('scavenger')) {
       this.player.essenceCollected++;
     }
-
-    // Vamp: 1 in 5 kills → +1 HP
     if (this.hasMod('vamp')) {
       this.killsSinceLastHeal++;
       if (this.killsSinceLastHeal >= 5) {
@@ -727,8 +846,6 @@ export class Game {
         this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
       }
     }
-
-    // Adrenaline: 3 kills in 3s → +5% speed stack
     if (this.hasMod('adrenaline')) {
       this.adrenalineKills++;
       this.adrenalineTimer = 3;
@@ -737,8 +854,6 @@ export class Game {
         this.adrenalineKills = 0;
       }
     }
-
-    // Momentum: reset on miss (handled in bullet code), but we track consecutive
     if (this.hasMod('momentum')) {
       this.momentumHits++;
     }
@@ -748,12 +863,11 @@ export class Game {
       this.hud.showHalMessage(halSay(HAL_FIRST_KILL), 3);
       this.halCooldown = 5;
     }
-
-    // HAL: elite kill announcement
     if (enemy.isElite && this.halCooldown <= 0) {
       this.hud.showHalMessage(halSay(HAL_ELITE_SPAWNED), 3);
       this.halCooldown = 6;
     }
+    if (enemy.isElite) this.eliteKills++;
 
     // Check level up
     if (this.player.level < MAX_LEVEL) {
@@ -763,7 +877,6 @@ export class Game {
         this.player.essenceCollected = 0;
         this.hud.showMessage(`LEVEL ${this.player.level}!`, 1.5);
         setTimeout(() => this.hud.showHalMessage(halSay(HAL_LEVEL_UP), 4), 1000);
-        // Simple stat boost on level
         this.player.maxHp += 1;
         this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
         // Queue modifier pick for next update tick
@@ -776,8 +889,6 @@ export class Game {
     if (def && Math.random() < 0.3) {
       this.ingredients.push({ id: `ingredient_${def.ingredient.id}`, name: def.ingredient.name });
     }
-
-    if (enemy.isElite) this.eliteKills++;
   }
 
   private updateSprites() {
@@ -799,7 +910,6 @@ export class Game {
         dir = 'south';
       }
 
-      // Use animation frame if moving, else still
       if (isMoving) {
         const animTex = this.textures[`player/anim/${dir}/${this.animFrame % 6}`];
         if (animTex) this.playerSprite.texture = animTex;
@@ -811,7 +921,6 @@ export class Game {
         const still = this.textures[`player/${dir}`];
         if (still) this.playerSprite.texture = still;
       }
-
       this.playerSprite.tint = this.player.hitFlash > 0 ? 0xff2200 : 0xffffff;
     }
 
@@ -824,7 +933,12 @@ export class Game {
       spr.visible = this.camera.isVisible(e.pos.x, e.pos.y, e.radius * 2);
       spr.tint = e.hitFlash > 0 ? 0xff4444 : 0xffffff;
 
-      // Swap to animation frame if enemy is moving
+      // Scale up apex enemy sprite
+      if (e.id === this.apexId) {
+        spr.scale.set(3.5);
+        spr.tint = e.hitFlash > 0 ? 0xff4444 : 0xff8800;
+      }
+
       const eMoving = Math.abs(e.vel.x) > 3 || Math.abs(e.vel.y) > 3;
       const texBase = CREATURE_SPRITE_MAP[e.name];
       if (texBase && eMoving) {
@@ -842,11 +956,10 @@ export class Game {
     const pAlpha = this.player.iFrames > 0 ? 0.4 : 1;
     const hit = this.player.hitFlash > 0;
 
-    // Payload escort pod rendering
+    // ── Payload escort pod rendering ──
     if (this.contractType === 'payload_escort' && this.podHp > 0) {
       const podX = WORLD_W * this.podProgress;
       const podY = WORLD_H / 2;
-      // Pod body
       g.circle(podX, podY, 20).fill({ color: 0x4db3e6, alpha: 0.8 });
       g.circle(podX, podY, 20).stroke({ color: 0x88ddff, width: 2, alpha: 0.9 });
       g.circle(podX, podY, 30).stroke({ color: 0x4db3e6, width: 1, alpha: 0.3 + Math.sin(this.elapsed * 3) * 0.15 });
@@ -855,9 +968,9 @@ export class Game {
       const bw = 50;
       g.rect(podX - bw / 2, podY - 35, bw, 4).fill({ color: 0x110000, alpha: 0.8 });
       g.rect(podX - bw / 2, podY - 35, bw * podHpFrac, 4).fill({ color: 0x4db3e6, alpha: 0.9 });
-      // Proximity ring (250px)
+      // Proximity ring
       g.circle(podX, podY, 250).stroke({ color: 0x4db3e6, width: 1, alpha: 0.15 });
-      // Off-screen arrow indicator
+      // Off-screen arrow
       const camCx = this.camera.x + this.camera.vw / 2;
       const camCy = this.camera.y + this.camera.vh / 2;
       const dx = podX - camCx, dy = podY - camCy;
@@ -869,21 +982,20 @@ export class Game {
         const ay = py + Math.sin(angle) * arrowDist;
         const sz = 8;
         g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
-         .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
-         .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
-         .closePath().fill({ color: 0x4db3e6, alpha: 0.8 });
+          .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
+          .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
+          .closePath().fill({ color: 0x4db3e6, alpha: 0.8 });
       }
     }
 
-    // Void breach hold zone indicator
+    // ── Void breach hold zone indicator ──
     if (this.contractType === 'void_breach' && !this.complete) {
       const cx = WORLD_W / 2, cy = WORLD_H / 2;
       const pulse = 0.3 + Math.sin(this.elapsed * 2) * 0.1;
       g.circle(cx, cy, 300).stroke({ color: 0x9919e6, width: 2, alpha: pulse });
       g.circle(cx, cy, 300).fill({ color: 0x9919e6, alpha: 0.05 });
-      // Progress text in HUD is handled separately, but show center marker
       g.circle(cx, cy, 8).fill({ color: 0x9919e6, alpha: 0.6 + Math.sin(this.elapsed * 4) * 0.2 });
-      // Off-screen arrow to zone center
+      // Off-screen arrow
       const camCx = this.camera.x + this.camera.vw / 2;
       const camCy = this.camera.y + this.camera.vh / 2;
       const dx = cx - camCx, dy = cy - camCy;
@@ -895,13 +1007,73 @@ export class Game {
         const ay = py + Math.sin(angle) * arrowDist;
         const sz = 8;
         g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
-         .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
-         .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
-         .closePath().fill({ color: 0x9919e6, alpha: 0.8 });
+          .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
+          .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
+          .closePath().fill({ color: 0x9919e6, alpha: 0.8 });
       }
     }
 
-    // Player glow ring (always drawn, even with sprite)
+    // ── Extraction caches rendering ──
+    if (this.contractType === 'extraction_run') {
+      for (const cache of this.caches) {
+        if (cache.collected) continue;
+        const cx = cache.pos.x, cy = cache.pos.y;
+        // Pulsing green diamond
+        const pulse = 1 + Math.sin(this.elapsed * 3 + cache.id) * 0.2;
+        const r = cache.radius * pulse;
+        g.moveTo(cx, cy - r).lineTo(cx + r * 0.7, cy).lineTo(cx, cy + r).lineTo(cx - r * 0.7, cy).closePath();
+        g.fill({ color: 0x33e666, alpha: 0.6 });
+        g.moveTo(cx, cy - r).lineTo(cx + r * 0.7, cy).lineTo(cx, cy + r).lineTo(cx - r * 0.7, cy).closePath();
+        g.stroke({ color: 0x66ff99, width: 2, alpha: 0.9 });
+        // Collection radius ring
+        g.circle(cx, cy, cache.radius + this.player.radius).stroke({ color: 0x33e666, width: 1, alpha: 0.2 });
+
+        // Off-screen arrow to each uncollected cache
+        const camCx = this.camera.x + this.camera.vw / 2;
+        const camCy = this.camera.y + this.camera.vh / 2;
+        const dx = cx - camCx, dy = cy - camCy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+          const angle = Math.atan2(dy, dx);
+          const arrowDist = 100;
+          const ax = px + Math.cos(angle) * arrowDist;
+          const ay = py + Math.sin(angle) * arrowDist;
+          const sz = 6;
+          g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
+            .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
+            .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
+            .closePath().fill({ color: 0x33e666, alpha: 0.7 });
+        }
+      }
+    }
+
+    // ── Boss Hunt apex indicator ──
+    if (this.contractType === 'boss_hunt' && this.apexSpawned) {
+      const apex = this.enemies.enemies.find(e => e.id === this.apexId);
+      if (apex) {
+        // Skull/crown indicator above apex
+        g.circle(apex.pos.x, apex.pos.y, apex.radius * 2.5).stroke({ color: 0xff8000, width: 2, alpha: 0.4 + Math.sin(this.elapsed * 2) * 0.2 });
+        g.circle(apex.pos.x, apex.pos.y, apex.radius * 3.5).stroke({ color: 0xff8000, width: 1, alpha: 0.15 });
+        // Off-screen arrow
+        const camCx = this.camera.x + this.camera.vw / 2;
+        const camCy = this.camera.y + this.camera.vh / 2;
+        const dx = apex.pos.x - camCx, dy = apex.pos.y - camCy;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+          const angle = Math.atan2(dy, dx);
+          const arrowDist = 120;
+          const ax = px + Math.cos(angle) * arrowDist;
+          const ay = py + Math.sin(angle) * arrowDist;
+          const sz = 8;
+          g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
+            .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
+            .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
+            .closePath().fill({ color: 0xff8000, alpha: 0.8 });
+        }
+      }
+    }
+
+    // Player glow ring
     g.circle(px, py, pr * 2.2).fill({ color: 0x0066aa, alpha: 0.06 * pAlpha });
     g.circle(px, py, pr * 1.5).stroke({ color: 0x00aaff, width: 1, alpha: 0.2 * pAlpha });
 
@@ -915,17 +1087,16 @@ export class Game {
       g.circle(px, py, 3).fill({ color: 0xffffff, alpha: 0.9 * pAlpha });
     }
 
-    // Aim line — laser targeting
+    // Aim line
     if (this.player.nearestEnemyPos) {
       const dist = 50;
       const ax = px + Math.cos(this.player.aimAngle) * dist;
       const ay = py + Math.sin(this.player.aimAngle) * dist;
       g.moveTo(px, py).lineTo(ax, ay).stroke({ color: 0xff2200, width: 1, alpha: 0.4 });
-      // Targeting reticle
       g.circle(ax, ay, 4).stroke({ color: 0xff2200, width: 1, alpha: 0.6 });
     }
 
-    // Enemies — sprite + glow overlays
+    // Enemies
     for (const e of this.enemies.enemies) {
       if (!this.camera.isVisible(e.pos.x, e.pos.y, e.radius * 2)) continue;
       const ex = e.pos.x, ey = e.pos.y, er = e.radius * 1.5;
@@ -933,52 +1104,44 @@ export class Game {
       const isVoid = e.voidType;
       const hasSprite = this.spritePool.has(e.id);
 
-      // Outer detection ring (when aggroed)
       if (e.isAggroed) {
         g.circle(ex, ey, er * 1.6).stroke({ color: col, width: 0.5, alpha: 0.15 });
       }
 
-      // Geometric fallback only when no sprite loaded
-      if (hasSprite) {
-        // Just draw glow and HP bar, skip shape
-      } else if (e.behavior === 'charge' || e.behavior === 'pack') {
-        // Triangle (aggressive)
-        g.moveTo(ex, ey - er).lineTo(ex + er * 0.87, ey + er * 0.5).lineTo(ex - er * 0.87, ey + er * 0.5).closePath();
-        g.fill({ color: col, alpha: 0.6 });
-        g.moveTo(ex, ey - er).lineTo(ex + er * 0.87, ey + er * 0.5).lineTo(ex - er * 0.87, ey + er * 0.5).closePath();
-        g.stroke({ color: col, width: 1.5, alpha: 0.9 });
-      } else if (e.behavior === 'strafe' || e.behavior === 'patrol_river') {
-        // Hexagon (ranged)
-        for (let i = 0; i < 6; i++) {
-          const a1 = (i / 6) * Math.PI * 2 - Math.PI / 2;
-          const a2 = ((i + 1) / 6) * Math.PI * 2 - Math.PI / 2;
-          if (i === 0) g.moveTo(ex + Math.cos(a1) * er, ey + Math.sin(a1) * er);
-          g.lineTo(ex + Math.cos(a2) * er, ey + Math.sin(a2) * er);
+      if (!hasSprite) {
+        if (e.behavior === 'charge' || e.behavior === 'pack') {
+          g.moveTo(ex, ey - er).lineTo(ex + er * 0.87, ey + er * 0.5).lineTo(ex - er * 0.87, ey + er * 0.5).closePath();
+          g.fill({ color: col, alpha: 0.6 });
+          g.moveTo(ex, ey - er).lineTo(ex + er * 0.87, ey + er * 0.5).lineTo(ex - er * 0.87, ey + er * 0.5).closePath();
+          g.stroke({ color: col, width: 1.5, alpha: 0.9 });
+        } else if (e.behavior === 'strafe' || e.behavior === 'patrol_river') {
+          for (let i = 0; i < 6; i++) {
+            const a1 = (i / 6) * Math.PI * 2 - Math.PI / 2;
+            const a2 = ((i + 1) / 6) * Math.PI * 2 - Math.PI / 2;
+            if (i === 0) g.moveTo(ex + Math.cos(a1) * er, ey + Math.sin(a1) * er);
+            g.lineTo(ex + Math.cos(a2) * er, ey + Math.sin(a2) * er);
+          }
+          g.closePath().fill({ color: col, alpha: 0.4 });
+          for (let i = 0; i < 6; i++) {
+            const a1 = (i / 6) * Math.PI * 2 - Math.PI / 2;
+            const a2 = ((i + 1) / 6) * Math.PI * 2 - Math.PI / 2;
+            if (i === 0) g.moveTo(ex + Math.cos(a1) * er, ey + Math.sin(a1) * er);
+            g.lineTo(ex + Math.cos(a2) * er, ey + Math.sin(a2) * er);
+          }
+          g.closePath().stroke({ color: col, width: 1.5, alpha: 0.8 });
+        } else if (e.behavior === 'lurker') {
+          g.moveTo(ex - er, ey - er).lineTo(ex + er, ey + er).stroke({ color: col, width: 3, alpha: 0.7 });
+          g.moveTo(ex + er, ey - er).lineTo(ex - er, ey + er).stroke({ color: col, width: 3, alpha: 0.7 });
+        } else {
+          g.rect(ex - er * 0.7, ey - er * 0.7, er * 1.4, er * 1.4).fill({ color: col, alpha: 0.5 });
+          g.rect(ex - er * 0.7, ey - er * 0.7, er * 1.4, er * 1.4).stroke({ color: col, width: 1.5, alpha: 0.8 });
         }
-        g.closePath().fill({ color: col, alpha: 0.4 });
-        for (let i = 0; i < 6; i++) {
-          const a1 = (i / 6) * Math.PI * 2 - Math.PI / 2;
-          const a2 = ((i + 1) / 6) * Math.PI * 2 - Math.PI / 2;
-          if (i === 0) g.moveTo(ex + Math.cos(a1) * er, ey + Math.sin(a1) * er);
-          g.lineTo(ex + Math.cos(a2) * er, ey + Math.sin(a2) * er);
-        }
-        g.closePath().stroke({ color: col, width: 1.5, alpha: 0.8 });
-      } else if (e.behavior === 'lurker') {
-        // X shape (ambusher)
-        g.moveTo(ex - er, ey - er).lineTo(ex + er, ey + er).stroke({ color: col, width: 3, alpha: 0.7 });
-        g.moveTo(ex + er, ey - er).lineTo(ex - er, ey + er).stroke({ color: col, width: 3, alpha: 0.7 });
-      } else {
-        // Default: square (standard)
-        g.rect(ex - er * 0.7, ey - er * 0.7, er * 1.4, er * 1.4).fill({ color: col, alpha: 0.5 });
-        g.rect(ex - er * 0.7, ey - er * 0.7, er * 1.4, er * 1.4).stroke({ color: col, width: 1.5, alpha: 0.8 });
       }
 
-      // Void type inner glow
       if (isVoid) {
         g.circle(ex, ey, er * 0.4).fill({ color: 0xff2200, alpha: 0.5 + Math.sin(this.elapsed * 4) * 0.2 });
       }
 
-      // HP bar — thin red line
       if (e.hp < e.maxHp) {
         const bw = er * 2.5;
         const bh = 3;
@@ -986,7 +1149,7 @@ export class Game {
         const by = ey - er - 10;
         const frac = e.hp / e.maxHp;
         g.rect(bx, by, bw, bh).fill({ color: 0x110000, alpha: 0.8 });
-        g.rect(bx, by, bw * frac, bh).fill({ color: 0xff2200, alpha: 0.9 });
+        g.rect(bx, by, bw * frac, bh).fill({ color: e.id === this.apexId ? 0xff8000 : 0xff2200, alpha: 0.9 });
       }
     }
   }
@@ -995,17 +1158,13 @@ export class Game {
     const g = this.bulletGfx;
     g.clear();
 
-    // Player bullets — glowing projectiles
     for (const b of this.weapons.bullets) {
       if (!this.camera.isVisible(b.pos.x, b.pos.y, b.radius * 3)) continue;
-      // Glow trail
       g.circle(b.pos.x, b.pos.y, b.radius * 3).fill({ color: b.color, alpha: 0.1 });
-      // Core
       g.circle(b.pos.x, b.pos.y, b.radius * 1.5).fill({ color: b.color, alpha: 0.8 });
       g.circle(b.pos.x, b.pos.y, b.radius * 0.8).fill({ color: 0xffffff, alpha: 0.6 });
     }
 
-    // Enemy bullets — red threat indicators
     for (const b of this.enemies.enemyBullets) {
       if (!this.camera.isVisible(b.pos.x, b.pos.y, b.radius * 3)) continue;
       g.circle(b.pos.x, b.pos.y, b.radius * 2.5).fill({ color: 0xff0000, alpha: 0.12 });
@@ -1048,14 +1207,15 @@ export class Game {
         this.player.corruptionResistMult = 0.75;
         break;
       case 'reload':
-        // Handled in weapon fire logic via hasMod check
         break;
     }
     this.hud.showMessage(`+ ${mod.name.toUpperCase()}`, 2);
   }
 
   /** Check if a modifier is active */
-  hasMod(id: string): boolean { return this.activeModifiers.includes(id); }
+  hasMod(id: string): boolean {
+    return this.activeModifiers.includes(id);
+  }
 
   /** Get damage multiplier from active modifiers */
   getModDamageMult(enemy: { isElite?: boolean; targetingPlayer?: boolean }): number {
@@ -1080,28 +1240,6 @@ export class Game {
     return mult;
   }
 
-  activateKit(kitId: string) {
-    if (!this.equippedKits.includes(kitId)) return;
-    if ((this.kitCooldowns[kitId] || 0) > 0) return;
-    if (kitId === 'stim_pack') {
-      this.player.heal(4);
-      this.player.corruption = Math.min(100, this.player.corruption + 15);
-      this.kitCooldowns[kitId] = 8;
-      this.hud.showMessage('STIM USED', 1.5);
-    }
-  }
-
-  activateKit(kitId: string) {
-    if (!this.equippedKits.includes(kitId)) return;
-    if ((this.kitCooldowns[kitId] || 0) > 0) return;
-    if (kitId === 'stim_pack') {
-      this.player.heal(4);
-      this.player.corruption = Math.min(100, this.player.corruption + 15);
-      this.kitCooldowns[kitId] = 8;
-      this.hud.showMessage('STIM USED', 1.5);
-    }
-  }
-
   finishHunt(status: 'COMPLETED' | 'FAILED' | 'ABANDONED') {
     const credits = Math.floor(this.totalKills * 5 + (status === 'COMPLETED' ? 50 : 10));
     this.callbacks.onHuntResult({
@@ -1110,7 +1248,7 @@ export class Game {
       timeSurvived: this.elapsed,
       totalKills: this.totalKills,
       eliteKills: this.eliteKills,
-      apexKills: 0,
+      apexKills: this.apexKills,
       peakCorruption: this.peakCorruption,
       damageDealt: this.damageDealt,
       damageTaken: this.damageTaken,
