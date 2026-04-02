@@ -21,6 +21,10 @@ export function GameCanvas() {
   const [modChoices, setModChoices] = useState<ModifierDef[] | null>(null);
   const modResolveRef = useRef<((m: ModifierDef) => void) | null>(null);
 
+  // Weapon perk picker state
+  const [weaponPerks, setWeaponPerks] = useState<{ perks: string[]; weaponName: string } | null>(null);
+  const weaponPerkResolveRef = useRef<((p: string) => void) | null>(null);
+
   const finishHunt = useCallback((status: 'COMPLETED' | 'FAILED' | 'ABANDONED', result: Parameters<typeof setHuntResult>[0] extends infer R ? Omit<R, 'contractName' | 'huntStatus' | 'parTime'> : never) => {
     setHuntResult({
       contractName: contract?.name ?? 'Hunt',
@@ -42,7 +46,7 @@ export function GameCanvas() {
       const { Application } = PIXI;
       const { Game } = await import('../game/Game');
 
-      // Global pixel-art settings — NEAREST neighbor, no smoothing
+      // Global pixel-art settings â NEAREST neighbor, no smoothing
       PIXI.TextureSource.defaultOptions.scaleMode = 'nearest';
       PIXI.AbstractRenderer.defaultOptions.roundPixels = true;
 
@@ -79,6 +83,10 @@ export function GameCanvas() {
           onHuntResult: (r) => {
             const status = r.totalKills >= (contract?.targetTotal ?? 10) ? 'COMPLETED' : 'FAILED';
             finishHunt(status, r);
+          },
+          onWeaponPerkPick: (perks, weaponName, resolve) => {
+            setWeaponPerks({ perks, weaponName });
+            weaponPerkResolveRef.current = resolve;
           },
           onModifierPick: (choices, resolve) => {
             setModChoices(choices);
@@ -126,6 +134,12 @@ export function GameCanvas() {
     }
   };
 
+  const handlePerkPick = (perk: string) => {
+    setWeaponPerks(null);
+    weaponPerkResolveRef.current?.(perk);
+    weaponPerkResolveRef.current = null;
+  };
+
   const handleModPick = (mod: ModifierDef) => {
     setModChoices(null);
     modResolveRef.current?.(mod);
@@ -135,6 +149,24 @@ export function GameCanvas() {
   return (
     <div className="h-full w-full relative">
       <div ref={containerRef} className="h-full w-full" />
+      {/* Weapon perk picker overlay */}
+      {weaponPerks && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center"
+          style={{ background: 'rgba(5,5,8,0.85)', backdropFilter: 'blur(4px)' }}>
+          <div className="flex flex-col items-center gap-4 p-6 max-w-md w-full">
+            <h2 className="text-sm tracking-[4px] text-[#ff8800] uppercase font-bold">{weaponPerks.weaponName} Upgrade</h2>
+            <div className="flex flex-col gap-3 w-full">
+              {weaponPerks.perks.map(perk => (
+                <button key={perk} onClick={() => handlePerkPick(perk)}
+                  className="w-full text-left p-3 border transition-all hover:scale-[1.02] active:scale-[0.98]"
+                  style={{ borderColor: '#ff8800', background: 'rgba(40,20,0,0.9)', color: '#ffcc88' }}>
+                  <div className="font-bold text-sm tracking-wide">{perk.replace(/_/g, ' ').toUpperCase()}</div>
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
       {/* Modifier picker overlay */}
       {modChoices && <ModifierPicker choices={modChoices} onPick={handleModPick} />}
       {/* Abandon overlay button */}
