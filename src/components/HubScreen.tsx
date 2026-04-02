@@ -1,11 +1,13 @@
 'use client';
-
 import { useState, useMemo } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useSaveStore } from '../store/saveStore';
 import { RECIPES, BONUS_DESCS, TRACK_ORDER, REP_THRESHOLDS } from '../data/recipes';
 import { KIT_DEFS, ALL_KIT_IDS } from '../data/kits';
-import { halSay, HAL_GREETINGS, HAL_FIRST_VISIT, HAL_PRE_CONTRACT, HAL_POST_HUNT_SUCCESS, HAL_POST_HUNT_FAIL, HAL_IDLE } from '../data/hal';
+import {
+  halSay, HAL_GREETINGS, HAL_FIRST_VISIT, HAL_PRE_CONTRACT,
+  HAL_POST_HUNT_SUCCESS, HAL_POST_HUNT_FAIL, HAL_IDLE
+} from '../data/hal';
 
 const UPGRADE_DEFS = [
   { id: 'max_hp', name: 'Reinforced Hull', desc: 'Max HP +2', cost: 80, maxLevel: 3 },
@@ -24,11 +26,20 @@ const WEAPON_UNLOCK_DEFS = [
 ];
 
 const TRACK_COLORS: Record<string, string> = {
-  contractor: '#44cc44', void_walker: '#aa44ff', tactician: '#4d80e6', scrapper: '#ff8844',
+  contractor: '#44cc44',
+  void_walker: '#aa44ff',
+  tactician: '#4d80e6',
+  scrapper: '#ff8844',
 };
+
 const PANTRY_COLORS: Record<string, string> = {
-  rift_dust: '#e6cc4d', void_crystal: '#aa44ff', cave_moss: '#4db366', river_silt: '#4d99e6', elite_core: '#ffd900',
+  rift_dust: '#e6cc4d',
+  void_crystal: '#aa44ff',
+  cave_moss: '#4db366',
+  river_silt: '#4d99e6',
+  elite_core: '#ffd900',
 };
+
 const ING_ORDER = ['rift_dust', 'void_crystal', 'cave_moss', 'river_silt', 'elite_core'];
 
 type Tab = 'ship' | 'upgrades' | 'kits';
@@ -43,8 +54,10 @@ export function HubScreen() {
     <div className="h-full flex flex-col" style={{ background: 'var(--color-bg-dark)' }}>
       {/* HAL Header */}
       <div className="px-5 pt-5 pb-3 text-center relative">
-        <div className="mx-auto w-14 h-14 rounded-full border-2 border-[var(--color-hal-red)] flex items-center justify-center mb-3 hal-pulse"
-          style={{ boxShadow: '0 0 30px rgba(255,51,0,0.25), inset 0 0 12px rgba(255,51,0,0.18)' }}>
+        <div
+          className="mx-auto w-14 h-14 rounded-full border-2 border-[var(--color-hal-red)] flex items-center justify-center mb-3 hal-pulse"
+          style={{ boxShadow: '0 0 30px rgba(255,51,0,0.25), inset 0 0 12px rgba(255,51,0,0.18)' }}
+        >
           <div className="w-5 h-5 rounded-full bg-[var(--color-hal-red)]" style={{ boxShadow: '0 0 16px rgba(255,51,0,0.7)' }} />
         </div>
         <h1 className="text-2xl font-bold tracking-[4px] text-[var(--color-hal-glow)] hal-blink">SPACE HUNTER</h1>
@@ -52,7 +65,6 @@ export function HubScreen() {
           {save.totalCredits} cr &nbsp;&middot;&nbsp; {save.contractsCompleted} missions &nbsp;&middot;&nbsp; corruption {save.totalCorruption}
         </p>
       </div>
-
       <div className="h-[1px] mx-4 bg-[var(--color-hal-dim)]" style={{ opacity: 0.4 }} />
 
       {/* Content */}
@@ -107,14 +119,20 @@ function SectionHeader({ text, color = 'var(--color-accent-cyan)' }: { text: str
   );
 }
 
-function ShipTab({ save, huntResult, onContracts }: { save: ReturnType<typeof useSaveStore.getState>; huntResult: ReturnType<typeof useGameStore.getState>['huntResult']; onContracts: () => void }) {
+function ShipTab({ save, huntResult, onContracts }: {
+  save: ReturnType<typeof useSaveStore.getState>;
+  huntResult: ReturnType<typeof useGameStore.getState>['huntResult'];
+  onContracts: () => void
+}) {
   const halMsg = useMemo(() => {
     if (save.contractsCompleted === 0 && !huntResult) return halSay(HAL_FIRST_VISIT);
     if (huntResult) {
-      return huntResult.huntStatus === 'COMPLETED' ? halSay(HAL_POST_HUNT_SUCCESS) : halSay(HAL_POST_HUNT_FAIL);
+      return huntResult.huntStatus === 'COMPLETED'
+        ? halSay(HAL_POST_HUNT_SUCCESS)
+        : halSay(HAL_POST_HUNT_FAIL);
     }
     return Math.random() < 0.6 ? halSay(HAL_PRE_CONTRACT) : halSay(HAL_IDLE);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [save.contractsCompleted, !!huntResult]);
 
   return (
@@ -159,6 +177,7 @@ function ShipTab({ save, huntResult, onContracts }: { save: ReturnType<typeof us
         const nextPts = maxed ? pts : REP_THRESHOLDS[level + 1];
         const prevPts = REP_THRESHOLDS[level];
         const frac = maxed ? 1 : Math.min((pts - prevPts) / (nextPts - prevPts), 1);
+
         return (
           <div key={track} className="space-y-2">
             <div className="flex justify-between text-sm">
@@ -212,7 +231,10 @@ function KitchenSection({ save }: { save: ReturnType<typeof useSaveStore.getStat
                     <p className={`text-sm ${affordable ? '' : 'opacity-40'}`}>{r.displayName}</p>
                     <p className="text-xs text-[var(--color-text-secondary)] mt-1">{costStr} +{r.rep}rep {r.bonus ? BONUS_DESCS[r.bonus] : ''}</p>
                   </div>
-                  <button className="pixel-btn text-sm py-2 px-4" style={{ borderColor: color, color }} disabled={!affordable}
+                  <button
+                    className="pixel-btn text-sm py-2 px-4"
+                    style={{ borderColor: color, color }}
+                    disabled={!affordable}
                     onClick={() => cookRecipe(r.cost, r.track, r.rep, r.bonus)}>
                     Cook
                   </button>
@@ -244,14 +266,15 @@ function UpgradesTab({ save }: { save: ReturnType<typeof useSaveStore.getState> 
               <p className="text-sm font-bold">{def.name} <span className="text-[var(--color-text-muted)]">Lv{level}/{def.maxLevel}</span></p>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">{def.desc}</p>
             </div>
-            <button className="pixel-btn text-sm py-2 px-4" disabled={maxed || save.totalCredits < def.cost}
+            <button
+              className="pixel-btn text-sm py-2 px-4"
+              disabled={maxed || save.totalCredits < def.cost}
               onClick={() => buyUpgrade(def.id, def.cost, def.maxLevel)}>
               {maxed ? 'MAX' : `${def.cost}cr`}
             </button>
           </div>
         );
       })}
-
       <SectionHeader text="WEAPONS" color="var(--color-accent-orange)" />
       {WEAPON_UNLOCK_DEFS.map(def => {
         const owned = save.unlockedWeapons.includes(def.id);
@@ -261,7 +284,9 @@ function UpgradesTab({ save }: { save: ReturnType<typeof useSaveStore.getState> 
               <p className="text-sm font-bold">{def.name}</p>
               <p className="text-xs text-[var(--color-text-secondary)] mt-1">{def.desc}</p>
             </div>
-            <button className="pixel-btn text-sm py-2 px-4" style={{ borderColor: 'var(--color-accent-orange)', color: 'var(--color-accent-orange)' }}
+            <button
+              className="pixel-btn text-sm py-2 px-4"
+              style={{ borderColor: 'var(--color-accent-orange)', color: 'var(--color-accent-orange)' }}
               disabled={owned || save.totalCredits < def.cost}
               onClick={() => unlockWeapon(def.id, def.cost)}>
               {owned ? 'OWNED' : `${def.cost}cr`}
@@ -284,9 +309,20 @@ function KitsTab({ save }: { save: ReturnType<typeof useSaveStore.getState> }) {
   return (
     <>
       <p className="text-center text-base text-[var(--color-accent-gold)] font-bold">Credits: {save.totalCredits}</p>
-      <p className="text-center text-sm text-[var(--color-accent-cyan)] mt-1">
-        S1: {KIT_DEFS[s1]?.name ?? s1} &nbsp;|&nbsp; S2: {KIT_DEFS[s2]?.name ?? s2}
-      </p>
+      <div className="flex justify-center gap-4 mt-1">
+        <span className="text-sm font-bold" style={{
+          color: 'var(--color-accent-green)',
+          border: '1px solid var(--color-accent-green)',
+          background: 'rgba(68,255,102,0.1)',
+          padding: '4px 12px',
+        }}>S1: {KIT_DEFS[s1]?.name ?? s1}</span>
+        <span className="text-sm font-bold" style={{
+          color: 'var(--color-accent-cyan)',
+          border: '1px solid var(--color-accent-cyan)',
+          background: 'rgba(34,153,204,0.1)',
+          padding: '4px 12px',
+        }}>S2: {KIT_DEFS[s2]?.name ?? s2}</span>
+      </div>
       <div className="h-[1px] bg-[var(--color-border)]" />
 
       {ALL_KIT_IDS.map(id => {
@@ -294,17 +330,39 @@ function KitsTab({ save }: { save: ReturnType<typeof useSaveStore.getState> }) {
         const owned = save.unlockedKits.includes(id);
         const tier = save.kitTiers[id] ?? 0;
         const t3Choice = save.kitT3Choices[id] ?? '';
+        const isS1 = s1 === id;
+        const isS2 = s2 === id;
+        const isEquipped = isS1 || isS2;
 
         return (
-          <div key={id} className="pixel-card space-y-3">
+          <div key={id} className="pixel-card space-y-3" style={isEquipped ? {
+            borderColor: isS1 ? 'var(--color-accent-green)' : 'var(--color-accent-cyan)',
+            background: isS1 ? 'rgba(68,255,102,0.06)' : 'rgba(34,153,204,0.06)',
+            boxShadow: isS1
+              ? '0 0 12px rgba(68,255,102,0.08), inset 0 0 12px rgba(68,255,102,0.04)'
+              : '0 0 12px rgba(34,153,204,0.08), inset 0 0 12px rgba(34,153,204,0.04)',
+          } : {}}>
             <div className="flex justify-between items-center">
               <span className="text-sm font-bold">{def.name}</span>
-              {owned && <span className="text-xs text-[var(--color-accent-cyan)]">TIER {tier}</span>}
+              <div className="flex items-center gap-2">
+                {isEquipped && (
+                  <span className="text-xs font-bold" style={{
+                    color: isS1 ? 'var(--color-accent-green)' : 'var(--color-accent-cyan)',
+                    border: `1px solid ${isS1 ? 'var(--color-accent-green)' : 'var(--color-accent-cyan)'}`,
+                    padding: '2px 6px',
+                  }}>
+                    {isS1 && isS2 ? 'S1+S2' : isS1 ? 'S1' : 'S2'}
+                  </span>
+                )}
+                {owned && <span className="text-xs text-[var(--color-accent-cyan)]">TIER {tier}</span>}
+              </div>
             </div>
             <p className="text-xs text-[var(--color-text-secondary)]">{def.desc}</p>
             <div className="flex gap-2 flex-wrap">
               {!owned ? (
-                <button className="pixel-btn text-sm py-2 px-4" style={{ borderColor: 'var(--color-accent-green)', color: 'var(--color-accent-green)' }}
+                <button
+                  className="pixel-btn text-sm py-2 px-4"
+                  style={{ borderColor: 'var(--color-accent-green)', color: 'var(--color-accent-green)' }}
                   disabled={save.totalCredits < def.unlockCost}
                   onClick={() => unlockKit(id, def.unlockCost)}>
                   Unlock {def.unlockCost}cr
@@ -312,14 +370,16 @@ function KitsTab({ save }: { save: ReturnType<typeof useSaveStore.getState> }) {
               ) : (
                 <>
                   {tier < 2 && (
-                    <button className="pixel-btn text-sm py-2 px-4" style={{ borderColor: 'var(--color-accent-purple)', color: 'var(--color-accent-purple)' }}
+                    <button className="pixel-btn text-sm py-2 px-4"
+                      style={{ borderColor: 'var(--color-accent-purple)', color: 'var(--color-accent-purple)' }}
                       disabled={save.totalCredits < def.tierCosts[1]}
                       onClick={() => upgradeKitTier(id, 2, def.tierCosts[1])}>
                       T2 {def.tierCosts[1]}cr
                     </button>
                   )}
                   {tier === 2 && (
-                    <button className="pixel-btn text-sm py-2 px-4" style={{ borderColor: 'var(--color-accent-purple)', color: 'var(--color-accent-purple)' }}
+                    <button className="pixel-btn text-sm py-2 px-4"
+                      style={{ borderColor: 'var(--color-accent-purple)', color: 'var(--color-accent-purple)' }}
                       disabled={save.totalCredits < def.tierCosts[2]}
                       onClick={() => upgradeKitTier(id, 3, def.tierCosts[2])}>
                       T3 {def.tierCosts[2]}cr
@@ -328,8 +388,30 @@ function KitsTab({ save }: { save: ReturnType<typeof useSaveStore.getState> }) {
                   {tier >= 3 && (
                     <span className="text-sm text-[var(--color-accent-gold)]">MAX {t3Choice ? `(${t3Choice})` : ''}</span>
                   )}
-                  <button className="pixel-btn pixel-btn-ghost text-sm py-2 px-4" onClick={() => assignKit(id, 0)}>S1</button>
-                  <button className="pixel-btn pixel-btn-ghost text-sm py-2 px-4" onClick={() => assignKit(id, 1)}>S2</button>
+                  <button
+                    className="pixel-btn text-sm py-2 px-4"
+                    style={isS1 ? {
+                      borderColor: 'var(--color-accent-green)',
+                      background: 'rgba(68,255,102,0.2)',
+                      color: 'var(--color-accent-green)',
+                      boxShadow: '0 0 8px rgba(68,255,102,0.15)',
+                    } : {
+                      borderColor: 'var(--color-border-light)',
+                      color: 'var(--color-text-secondary)',
+                    }}
+                    onClick={() => assignKit(id, 0)}>S1</button>
+                  <button
+                    className="pixel-btn text-sm py-2 px-4"
+                    style={isS2 ? {
+                      borderColor: 'var(--color-accent-cyan)',
+                      background: 'rgba(34,153,204,0.2)',
+                      color: 'var(--color-accent-cyan)',
+                      boxShadow: '0 0 8px rgba(34,153,204,0.15)',
+                    } : {
+                      borderColor: 'var(--color-border-light)',
+                      color: 'var(--color-text-secondary)',
+                    }}
+                    onClick={() => assignKit(id, 1)}>S2</button>
                 </>
               )}
             </div>
