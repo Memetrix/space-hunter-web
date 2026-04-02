@@ -19,6 +19,9 @@ import {
   HAL_RELOAD,
 } from '../data/hal';
 
+// Sprite base path for GitHub Pages support
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
 // Sprite name → creature name mapping
 const CREATURE_SPRITE_MAP: Record<string, string> = {
   'Void Leech': 'void_leech',
@@ -121,6 +124,9 @@ export class Game {
   cacheCount = 0;        // extraction_run: total caches
   cachesCollected = 0;   // extraction_run: collected so far
 
+  // Kit cooldown tracking
+  kitCooldowns: Record<string, number> = {};
+
   // Active modifiers
   activeModifiers: string[] = [];
   modifierPickPending = false;     // true while waiting for player to choose
@@ -155,6 +161,11 @@ export class Game {
     this.targetTotal = targetTotal;
     this.hpBonus = hpBonus;
     this.magBonus = magBonus;
+
+    // Initialize kit cooldowns
+    for (const kit of kits) {
+      this.kitCooldowns[kit] = 0;
+    }
 
     // Contract-specific init
     if (contractExtras?.holdTime) {
@@ -252,15 +263,15 @@ export class Game {
     const phase1: Array<{ key: string; url: string }> = [];
     for (const name of SPRITES_WITH_DIRS) {
       for (const dir of DIR_NAMES) {
-        phase1.push({ key: `${name}/${dir}`, url: `/sprites/${name}/${dir}.png` });
+        phase1.push({ key: `${name}/${dir}`, url: `${BASE}/sprites/${name}/${dir}.png` });
       }
     }
     for (const name of ['rift_parasite', 'void_spawn', 'bullet_player', 'bullet_enemy', 'hal_eye', 'explosion', 'essence_orb']) {
-      phase1.push({ key: name, url: `/sprites/${name}.png` });
+      phase1.push({ key: name, url: `${BASE}/sprites/${name}.png` });
     }
     // Obstacle sprites
     for (const name of ['obs_asteroid', 'obs_crystal', 'obs_debris']) {
-      phase1.push({ key: name, url: `/sprites/obstacles/${name}.png` });
+      phase1.push({ key: name, url: `${BASE}/sprites/obstacles/${name}.png` });
     }
     await loadBatch(phase1);
 
@@ -302,7 +313,7 @@ export class Game {
       for (const dir of DIR_NAMES) {
         for (let f = 0; f < frames; f++) {
           const fStr = String(f).padStart(3, '0');
-          phase2.push({ key: `${name}/anim/${dir}/${f}`, url: `/sprites/${name}/${animName}/${dir}/frame_${fStr}.png` });
+          phase2.push({ key: `${name}/anim/${dir}/${f}`, url: `${BASE}/sprites/${name}/${animName}/${dir}/frame_${fStr}.png` });
         }
       }
     }
@@ -373,11 +384,31 @@ export class Game {
 
     // Keyboard
     const onKey = (e: KeyboardEvent, down: boolean) => {
-      if (down) this.player.onKeyDown(e.key);
-      else this.player.onKeyUp(e.key);
+      if (down) {
+        this.player.onKeyDown(e.key);
+        // Handle kit activation (Q = stim pack)
+        if (e.key.toLowerCase() === 'q') {
+          this.activateKit('stim_pack');
+        }
+      } else {
+        this.player.onKeyUp(e.key);
+      }
     };
     window.addEventListener('keydown', (e) => onKey(e, true));
     window.addEventListener('keyup', (e) => onKey(e, false));
+  }
+
+  private activateKit(kitId: string) {
+    if (!this.equippedKits.includes(kitId)) return;
+    if (this.kitCooldowns[kitId] && this.kitCooldowns[kitId] > 0) return;
+
+    if (kitId === 'stim_pack') {
+      // Heal 4 HP, add 15 corruption
+      this.player.hp = Math.min(this.player.hp + 4, this.player.maxHp);
+      this.player.corruption = Math.min(100, this.player.corruption + 15);
+      this.kitCooldowns['stim_pack'] = 8;
+      this.hud.showMessage('STIM USED', 1.5);
+    }
   }
 
   update(dt: number) {
@@ -389,6 +420,13 @@ export class Game {
     if (this.animTimer >= 1 / this.animFPS) {
       this.animTimer -= 1 / this.animFPS;
       this.animFrame++;
+    }
+
+    // Decrement kit cooldowns
+    for (const kit of Object.keys(this.kitCooldowns)) {
+      if (this.kitCooldowns[kit] > 0) {
+        this.kitCooldowns[kit] -= dt;
+      }
     }
 
     // Player update

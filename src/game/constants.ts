@@ -20,9 +20,9 @@ export const CORR_CLEAN = 15;
 export const CORR_VALLEY = 35;
 export const CORR_CORRUPT = 60;
 
-// XP — flat per-tier: Lv1-5 = 20, Lv6-10 = 35, Lv11-12 = 55
+// XP — flat per-tier, 10x for testing: Lv1-5 = 2, Lv6-10 = 4, Lv11-12 = 6
 export const MAX_LEVEL = 12;
-export const XP_PER_LEVEL = [0, 20, 20, 20, 20, 20, 35, 35, 35, 35, 35, 55, 55];
+export const XP_PER_LEVEL = [0, 2, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6];
 
 // Combat
 export const ENEMY_MELEE_RANGE = 30;
