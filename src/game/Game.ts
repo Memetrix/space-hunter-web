@@ -10,6 +10,8 @@ import { PLAYER_BASE_HP, PLAYER_BASE_SPEED, WORLD_W, WORLD_H, PLAYER_COLOR, XP_P
 import { CREATURE_DEFS } from '../data/creatures';
 
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
+
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
 import { type ModifierDef, rollModifiers } from '../data/modifiers';
 import {
   halSay,
@@ -99,6 +101,9 @@ export class Game {
   // Kit state
   kitCooldowns: Record<string, number> = {};
 
+  // Kit state
+  kitCooldowns: Record<string, number> = {};
+
   // State
   elapsed = 0;
   waveTimer = 15;
@@ -135,6 +140,7 @@ export class Game {
   // Active modifiers
   activeModifiers: string[] = [];
   modifierPickPending = false;     // true while waiting for player to choose
+  pendingLevelUpPick = false;       // queued from onEnemyKilled, resolved in update
   adrenalineKills = 0;             // kills within 3s window for adrenaline
   adrenalineTimer = 0;
   adrenalineStacks = 0;
@@ -511,6 +517,17 @@ export class Game {
       this.halCooldown = 4;
     }
 
+    // Deferred level-up modifier pick
+    if (this.pendingLevelUpPick && !this.modifierPickPending) {
+      this.pendingLevelUpPick = false;
+      this.offerModifierPick();
+    }
+
+    // Kit cooldowns
+    for (const k of Object.keys(this.kitCooldowns)) {
+      if (this.kitCooldowns[k] > 0) this.kitCooldowns[k] -= dt;
+    }
+
     // Kit cooldowns
     for (const k of Object.keys(this.kitCooldowns)) {
       if (this.kitCooldowns[k] > 0) this.kitCooldowns[k] -= dt;
@@ -747,9 +764,9 @@ export class Game {
         // Simple stat boost on level
         this.player.maxHp += 1;
         this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
-        // Offer modifier pick on level up
+        // Queue modifier pick for next update tick
         if (this.activeModifiers.length < 6) {
-          this.offerModifierPick();
+          this.pendingLevelUpPick = true;
         }
       }
     }
@@ -1002,6 +1019,17 @@ export class Game {
     if (this.hasMod('last_stand') && this.player.hp < 3) mult *= 1.3;
     if (this.hasMod('adrenaline')) mult *= 1 + this.adrenalineStacks * 0.05;
     return mult;
+  }
+
+  activateKit(kitId: string) {
+    if (!this.equippedKits.includes(kitId)) return;
+    if ((this.kitCooldowns[kitId] || 0) > 0) return;
+    if (kitId === 'stim_pack') {
+      this.player.heal(4);
+      this.player.corruption = Math.min(100, this.player.corruption + 15);
+      this.kitCooldowns[kitId] = 8;
+      this.hud.showMessage('STIM USED', 1.5);
+    }
   }
 
   activateKit(kitId: string) {
