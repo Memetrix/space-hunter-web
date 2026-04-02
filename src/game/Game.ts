@@ -747,6 +747,10 @@ export class Game {
         // Simple stat boost on level
         this.player.maxHp += 1;
         this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
+        // Offer modifier pick on level up
+        if (this.activeModifiers.length < 6) {
+          this.offerModifierPick();
+        }
       }
     }
 
