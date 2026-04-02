@@ -51,6 +51,16 @@ function angleTo8Dir(vx: number, vy: number): string {
 // Sprites that have 8-direction folders
 const SPRITES_WITH_DIRS = ['player', 'void_leech', 'shadow_crawler', 'abyss_worm', 'nether_stalker', 'cave_lurker', 'tide_wraith'];
 
+// ── Void breach zone interface ──
+interface VoidBreachZone {
+  id: number;
+  pos: { x: number; y: number };
+  sealed: boolean;
+  holdTimer: number;
+  holdTime: number;
+  radius: number;
+}
+
 // ── Extraction cache interface ──
 interface ExtractionCache {
   id: number;
@@ -133,9 +143,12 @@ export class Game {
   magBonus = 0;
 
   // Contract-specific state
-  holdTime = 0;       // void_breach: seconds required
-  holdTimer = 0;      // void_breach: seconds held so far
+  holdTime = 0;       // void_breach: total seconds across all breaches
   holdZoneActive = false;
+  breaches: VoidBreachZone[] = [];  // void_breach: sequential zones
+  activeBreachIdx = 0;              // void_breach: current breach index
+  breachEnemyTimer = 0;             // void_breach: timer for spawning enemies near breach
+  breachesSealed = 0;               // void_breach: count of sealed breaches
 
   podHp = 0;          // payload_escort: pod HP
   podMaxHp = 0;
@@ -263,6 +276,9 @@ export class Game {
     setTimeout(() => this.hud.showHalMessage(halSay(HAL_HUNT_START), 5), 2500);
 
     // ── Contract-specific setup ──
+    if (this.contractType === 'void_breach') {
+      this.spawnBreaches();
+    }
     if (this.contractType === 'extraction_run') {
       this.spawnCaches();
     }
@@ -300,6 +316,39 @@ export class Game {
         radius: 30,
       });
     }
+  }
+
+  // ── Void Breach: spawn sequential breach zones ──
+  private spawnBreaches() {
+    const BREACH_COUNT = 3;
+    const perBreachTime = this.holdTime / BREACH_COUNT;
+    this.breaches = [];
+    for (let i = 0; i < BREACH_COUNT; i++) {
+      let pos: { x: number; y: number };
+      let attempts = 0;
+      do {
+        pos = {
+          x: randRange(300, WORLD_W - 300),
+          y: randRange(300, WORLD_H - 300),
+        };
+        attempts++;
+      } while (
+        (v2dist(pos, this.player.pos) < 500 ||
+          this.breaches.some(b => v2dist(pos, b.pos) < 600)) &&
+        attempts < 30
+      );
+      this.breaches.push({
+        id: i,
+        pos,
+        sealed: false,
+        holdTimer: 0,
+        holdTime: perBreachTime,
+        radius: 250,
+      });
+    }
+    this.activeBreachIdx = 0;
+    this.breachesSealed = 0;
+    this.hud.showMessage(`BREACH 1/${BREACH_COUNT} DETECTED`, 2);
   }
 
   // ── Boss Hunt: spawn an apex enemy ──
@@ -735,20 +784,51 @@ export class Game {
 
     // ── Contract completion checks ──
 
-    // VOID BREACH: hold zone timer
-    if (this.contractType === 'void_breach' && !this.complete) {
-      const cx = WORLD_W / 2, cy = WORLD_H / 2;
-      const distToCenter = v2dist(this.player.pos, { x: cx, y: cy });
-      this.holdZoneActive = distToCenter < 300;
-      if (this.holdZoneActive) {
-        this.holdTimer += dt;
-        this.player.corruption = Math.min(100, this.player.corruption + 3.0 * this.player.corruptionResistMult * dt);
-      }
-      if (this.holdTimer >= this.holdTime) {
-        this.complete = true;
-        this.hud.showMessage('BREACH SEALED', 2);
-        this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
-        setTimeout(() => this.finishHunt('COMPLETED'), 2000);
+    // VOID BREACH: sequential breach zones
+    if (this.contractType === 'void_breach' && !this.complete && this.breaches.length > 0) {
+      const activeBreach = this.breaches[this.activeBreachIdx];
+      if (activeBreach && !activeBreach.sealed) {
+        const distToBreach = v2dist(this.player.pos, activeBreach.pos);
+        this.holdZoneActive = distToBreach < activeBreach.radius;
+        if (this.holdZoneActive) {
+          activeBreach.holdTimer += dt;
+          this.player.corruption = Math.min(100, this.player.corruption + 2.5 * this.player.corruptionResistMult * dt);
+
+          // Spawn enemies near the breach while holding
+          this.breachEnemyTimer -= dt;
+          if (this.breachEnemyTimer <= 0) {
+            this.breachEnemyTimer = Math.max(3, 6 - this.breachesSealed * 1.5);
+            const spawnCount = 3 + this.breachesSealed * 2;
+            this.enemies.spawnWave(spawnCount, activeBreach.pos, this.map);
+          }
+        }
+
+        // Breach sealed
+        if (activeBreach.holdTimer >= activeBreach.holdTime) {
+          activeBreach.sealed = true;
+          this.breachesSealed++;
+
+          // Burst of enemies after sealing
+          const burstCount = 8 + this.breachesSealed * 4;
+          this.enemies.spawnWave(burstCount, activeBreach.pos, this.map);
+
+          if (this.breachesSealed >= this.breaches.length) {
+            // All breaches sealed
+            this.complete = true;
+            this.hud.showMessage('ALL BREACHES SEALED', 2.5);
+            this.hud.showHalMessage(halSay(HAL_CONTRACT_DONE), 5);
+            setTimeout(() => this.finishHunt('COMPLETED'), 2000);
+          } else {
+            // Move to next breach
+            this.activeBreachIdx = this.breaches.findIndex(b => !b.sealed);
+            this.breachEnemyTimer = 4;
+            this.hud.showMessage(`BREACH ${this.breachesSealed}/${this.breaches.length} SEALED`, 2);
+            if (this.halCooldown <= 0) {
+              setTimeout(() => this.hud.showHalMessage('Breach contained. Moving to next rift.', 4), 1000);
+              this.halCooldown = 5;
+            }
+          }
+        }
       }
     }
 
@@ -988,28 +1068,69 @@ export class Game {
       }
     }
 
-    // ── Void breach hold zone indicator ──
-    if (this.contractType === 'void_breach' && !this.complete) {
-      const cx = WORLD_W / 2, cy = WORLD_H / 2;
-      const pulse = 0.3 + Math.sin(this.elapsed * 2) * 0.1;
-      g.circle(cx, cy, 300).stroke({ color: 0x9919e6, width: 2, alpha: pulse });
-      g.circle(cx, cy, 300).fill({ color: 0x9919e6, alpha: 0.05 });
-      g.circle(cx, cy, 8).fill({ color: 0x9919e6, alpha: 0.6 + Math.sin(this.elapsed * 4) * 0.2 });
-      // Off-screen arrow
-      const camCx = this.camera.x + this.camera.viewW / 2;
-      const camCy = this.camera.y + this.camera.viewH / 2;
-      const dx = cx - camCx, dy = cy - camCy;
-      const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > Math.max(this.camera.viewW, this.camera.viewH) * 0.4) {
-        const angle = Math.atan2(dy, dx);
-        const arrowDist = 120;
-        const ax = px + Math.cos(angle) * arrowDist;
-        const ay = py + Math.sin(angle) * arrowDist;
-        const sz = 8;
-        g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
-          .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
-          .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
-          .closePath().fill({ color: 0x9919e6, alpha: 0.8 });
+    // ── Void breach zones rendering ──
+    if (this.contractType === 'void_breach') {
+      for (const breach of this.breaches) {
+        const bx = breach.pos.x, by = breach.pos.y;
+        const isActive = !breach.sealed && breach.id === this.activeBreachIdx;
+        const progress = Math.min(1, breach.holdTimer / breach.holdTime);
+
+        if (breach.sealed) {
+          // Sealed breach: dimmed, no pulse
+          g.circle(bx, by, breach.radius).stroke({ color: 0x9919e6, width: 1, alpha: 0.15 });
+          g.circle(bx, by, 8).fill({ color: 0x44cc66, alpha: 0.4 });
+          // Checkmark-ish cross
+          g.circle(bx, by, breach.radius * 0.3).stroke({ color: 0x44cc66, width: 1, alpha: 0.2 });
+        } else if (isActive) {
+          // Active breach: pulsing, with progress bar
+          const pulse = 0.3 + Math.sin(this.elapsed * 2) * 0.1;
+          const innerPulse = 0.6 + Math.sin(this.elapsed * 4) * 0.2;
+          g.circle(bx, by, breach.radius).stroke({ color: 0x9919e6, width: 2, alpha: pulse });
+          g.circle(bx, by, breach.radius).fill({ color: 0x9919e6, alpha: 0.05 + progress * 0.03 });
+          g.circle(bx, by, 8).fill({ color: 0x9919e6, alpha: innerPulse });
+
+          // Progress ring (arc around the breach)
+          if (progress > 0) {
+            const arcRadius = breach.radius + 8;
+            const startAngle = -Math.PI / 2;
+            const endAngle = startAngle + progress * Math.PI * 2;
+            const steps = Math.max(8, Math.floor(progress * 40));
+            for (let i = 0; i < steps; i++) {
+              const a1 = startAngle + (i / steps) * (endAngle - startAngle);
+              const a2 = startAngle + ((i + 1) / steps) * (endAngle - startAngle);
+              if (i === 0) g.moveTo(bx + Math.cos(a1) * arcRadius, by + Math.sin(a1) * arcRadius);
+              g.lineTo(bx + Math.cos(a2) * arcRadius, by + Math.sin(a2) * arcRadius);
+            }
+            g.stroke({ color: 0xcc44ff, width: 3, alpha: 0.8 });
+          }
+
+          // Progress bar below breach center
+          const barW = 80, barH = 6;
+          g.rect(bx - barW / 2, by + breach.radius + 15, barW, barH).fill({ color: 0x110011, alpha: 0.8 });
+          g.rect(bx - barW / 2, by + breach.radius + 15, barW * progress, barH).fill({ color: 0xcc44ff, alpha: 0.9 });
+          g.rect(bx - barW / 2, by + breach.radius + 15, barW, barH).stroke({ color: 0x9919e6, width: 1, alpha: 0.5 });
+
+          // Off-screen arrow to active breach
+          const camCx = this.camera.x + this.camera.viewW / 2;
+          const camCy = this.camera.y + this.camera.viewH / 2;
+          const dx = bx - camCx, dy = by - camCy;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist > Math.max(this.camera.viewW, this.camera.viewH) * 0.4) {
+            const angle = Math.atan2(dy, dx);
+            const arrowDist = 120;
+            const ax = px + Math.cos(angle) * arrowDist;
+            const ay = py + Math.sin(angle) * arrowDist;
+            const sz = 8;
+            g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
+              .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
+              .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
+              .closePath().fill({ color: 0x9919e6, alpha: 0.8 });
+          }
+        } else {
+          // Future breach: faintly visible
+          g.circle(bx, by, breach.radius).stroke({ color: 0x9919e6, width: 1, alpha: 0.08 });
+          g.circle(bx, by, 6).fill({ color: 0x9919e6, alpha: 0.15 });
+        }
       }
     }
 
