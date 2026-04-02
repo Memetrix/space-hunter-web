@@ -971,11 +971,11 @@ export class Game {
       // Proximity ring
       g.circle(podX, podY, 250).stroke({ color: 0x4db3e6, width: 1, alpha: 0.15 });
       // Off-screen arrow
-      const camCx = this.camera.x + this.camera.vw / 2;
-      const camCy = this.camera.y + this.camera.vh / 2;
+      const camCx = this.camera.x + this.camera.viewW / 2;
+      const camCy = this.camera.y + this.camera.viewH / 2;
       const dx = podX - camCx, dy = podY - camCy;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+      if (dist > Math.max(this.camera.viewW, this.camera.viewH) * 0.4) {
         const angle = Math.atan2(dy, dx);
         const arrowDist = 120;
         const ax = px + Math.cos(angle) * arrowDist;
@@ -996,11 +996,11 @@ export class Game {
       g.circle(cx, cy, 300).fill({ color: 0x9919e6, alpha: 0.05 });
       g.circle(cx, cy, 8).fill({ color: 0x9919e6, alpha: 0.6 + Math.sin(this.elapsed * 4) * 0.2 });
       // Off-screen arrow
-      const camCx = this.camera.x + this.camera.vw / 2;
-      const camCy = this.camera.y + this.camera.vh / 2;
+      const camCx = this.camera.x + this.camera.viewW / 2;
+      const camCy = this.camera.y + this.camera.viewH / 2;
       const dx = cx - camCx, dy = cy - camCy;
       const dist = Math.sqrt(dx * dx + dy * dy);
-      if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+      if (dist > Math.max(this.camera.viewW, this.camera.viewH) * 0.4) {
         const angle = Math.atan2(dy, dx);
         const arrowDist = 120;
         const ax = px + Math.cos(angle) * arrowDist;
@@ -1029,11 +1029,11 @@ export class Game {
         g.circle(cx, cy, cache.radius + this.player.radius).stroke({ color: 0x33e666, width: 1, alpha: 0.2 });
 
         // Off-screen arrow to each uncollected cache
-        const camCx = this.camera.x + this.camera.vw / 2;
-        const camCy = this.camera.y + this.camera.vh / 2;
+        const camCx = this.camera.x + this.camera.viewW / 2;
+        const camCy = this.camera.y + this.camera.viewH / 2;
         const dx = cx - camCx, dy = cy - camCy;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+        if (dist > Math.max(this.camera.viewW, this.camera.viewH) * 0.4) {
           const angle = Math.atan2(dy, dx);
           const arrowDist = 100;
           const ax = px + Math.cos(angle) * arrowDist;
@@ -1055,11 +1055,11 @@ export class Game {
         g.circle(apex.pos.x, apex.pos.y, apex.radius * 2.5).stroke({ color: 0xff8000, width: 2, alpha: 0.4 + Math.sin(this.elapsed * 2) * 0.2 });
         g.circle(apex.pos.x, apex.pos.y, apex.radius * 3.5).stroke({ color: 0xff8000, width: 1, alpha: 0.15 });
         // Off-screen arrow
-        const camCx = this.camera.x + this.camera.vw / 2;
-        const camCy = this.camera.y + this.camera.vh / 2;
+        const camCx = this.camera.x + this.camera.viewW / 2;
+        const camCy = this.camera.y + this.camera.viewH / 2;
         const dx = apex.pos.x - camCx, dy = apex.pos.y - camCy;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+        if (dist > Math.max(this.camera.viewW, this.camera.viewH) * 0.4) {
           const angle = Math.atan2(dy, dx);
           const arrowDist = 120;
           const ax = px + Math.cos(angle) * arrowDist;
