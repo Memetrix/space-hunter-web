@@ -1217,7 +1217,7 @@ export class Game {
 
         if (breach.sealed) {
           // Sealed breach: dimmed, no pulse
-          g.circle(bx, by, breach.radius).stroke({ color: 0x9919e6, width: 1, alpha: 0.15 });
+          g.circle(bx, by, breach.radius).stroke({ color: 0xaa22ff, width: 1, alpha: 0.15 });
           g.circle(bx, by, 8).fill({ color: 0x44cc66, alpha: 0.4 });
           // Checkmark-ish cross
           g.circle(bx, by, breach.radius * 0.3).stroke({ color: 0x44cc66, width: 1, alpha: 0.2 });
@@ -1225,9 +1225,9 @@ export class Game {
           // Active breach: pulsing, with progress bar
           const pulse = 0.3 + Math.sin(this.elapsed * 2) * 0.1;
           const innerPulse = 0.6 + Math.sin(this.elapsed * 4) * 0.2;
-          g.circle(bx, by, breach.radius).stroke({ color: 0x9919e6, width: 2, alpha: pulse });
-          g.circle(bx, by, breach.radius).fill({ color: 0x9919e6, alpha: 0.05 + progress * 0.03 });
-          g.circle(bx, by, 8).fill({ color: 0x9919e6, alpha: innerPulse });
+          g.circle(bx, by, breach.radius).stroke({ color: 0xaa22ff, width: 2, alpha: pulse });
+          g.circle(bx, by, breach.radius).fill({ color: 0xaa22ff, alpha: 0.05 + progress * 0.03 });
+          g.circle(bx, by, 8).fill({ color: 0xaa22ff, alpha: innerPulse });
 
           // Progress ring (arc around the breach)
           if (progress > 0) {
@@ -1248,7 +1248,7 @@ export class Game {
           const barW = 80, barH = 6;
           g.rect(bx - barW / 2, by + breach.radius + 15, barW, barH).fill({ color: 0x110011, alpha: 0.8 });
           g.rect(bx - barW / 2, by + breach.radius + 15, barW * progress, barH).fill({ color: 0xcc44ff, alpha: 0.9 });
-          g.rect(bx - barW / 2, by + breach.radius + 15, barW, barH).stroke({ color: 0x9919e6, width: 1, alpha: 0.5 });
+          g.rect(bx - barW / 2, by + breach.radius + 15, barW, barH).stroke({ color: 0xaa22ff, width: 1, alpha: 0.5 });
 
           // Off-screen arrow to active breach
           const camCx = this.camera.x + this.camera.viewW / 2;
@@ -1264,12 +1264,12 @@ export class Game {
             g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
               .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
               .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
-              .closePath().fill({ color: 0x9919e6, alpha: 0.8 });
+              .closePath().fill({ color: 0xaa22ff, alpha: 0.8 });
           }
         } else {
           // Future breach: faintly visible
-          g.circle(bx, by, breach.radius).stroke({ color: 0x9919e6, width: 1, alpha: 0.08 });
-          g.circle(bx, by, 6).fill({ color: 0x9919e6, alpha: 0.15 });
+          g.circle(bx, by, breach.radius).stroke({ color: 0xaa22ff, width: 1, alpha: 0.08 });
+          g.circle(bx, by, 6).fill({ color: 0xaa22ff, alpha: 0.15 });
         }
       }
     }
