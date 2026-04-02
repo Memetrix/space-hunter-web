@@ -8,6 +8,8 @@ import { HUD } from './HUD';
 import { v2dist } from '../lib/math';
 import { PLAYER_BASE_HP, PLAYER_BASE_SPEED, WORLD_W, WORLD_H, PLAYER_COLOR, XP_PER_LEVEL, MAX_LEVEL } from './constants';
 import { CREATURE_DEFS } from '../data/creatures';
+
+const BASE = process.env.NEXT_PUBLIC_BASE_PATH || '';
 import { type ModifierDef, rollModifiers } from '../data/modifiers';
 import {
   halSay,
@@ -93,6 +95,9 @@ export class Game {
   animFrame = 0;       // global animation frame counter
   animTimer = 0;       // time accumulator for frame stepping
   animFPS = 8;         // animation playback speed
+
+  // Kit state
+  kitCooldowns: Record<string, number> = {};
 
   // State
   elapsed = 0;
@@ -394,7 +399,10 @@ export class Game {
         this.player.onKeyUp(e.key);
       }
     };
-    window.addEventListener('keydown', (e) => onKey(e, true));
+    window.addEventListener('keydown', (e) => {
+      if (e.key === 'q' || e.key === 'Q') this.activateKit('stim_pack');
+      onKey(e, true);
+    });
     window.addEventListener('keyup', (e) => onKey(e, false));
   }
 
@@ -501,6 +509,11 @@ export class Game {
     if (this.player.hitFlash > 0.12 && this.halCooldown <= 0 && Math.random() < 0.18) {
       this.hud.showHalMessage(halSay(HAL_TOOK_DAMAGE), 2);
       this.halCooldown = 4;
+    }
+
+    // Kit cooldowns
+    for (const k of Object.keys(this.kitCooldowns)) {
+      if (this.kitCooldowns[k] > 0) this.kitCooldowns[k] -= dt;
     }
 
     // Camera
@@ -985,6 +998,17 @@ export class Game {
     if (this.hasMod('last_stand') && this.player.hp < 3) mult *= 1.3;
     if (this.hasMod('adrenaline')) mult *= 1 + this.adrenalineStacks * 0.05;
     return mult;
+  }
+
+  activateKit(kitId: string) {
+    if (!this.equippedKits.includes(kitId)) return;
+    if ((this.kitCooldowns[kitId] || 0) > 0) return;
+    if (kitId === 'stim_pack') {
+      this.player.heal(4);
+      this.player.corruption = Math.min(100, this.player.corruption + 15);
+      this.kitCooldowns[kitId] = 8;
+      this.hud.showMessage('STIM USED', 1.5);
+    }
   }
 
   finishHunt(status: 'COMPLETED' | 'FAILED' | 'ABANDONED') {
