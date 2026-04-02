@@ -140,7 +140,7 @@ export class Game {
   // Active modifiers
   activeModifiers: string[] = [];
   modifierPickPending = false;     // true while waiting for player to choose
-  pendingLevelUpPick = false;       // queued from onEnemyKilled, resolved in update
+  pendingLevelUpPicks = 0;          // queued from onEnemyKilled, resolved in update
   adrenalineKills = 0;             // kills within 3s window for adrenaline
   adrenalineTimer = 0;
   adrenalineStacks = 0;
@@ -517,9 +517,9 @@ export class Game {
       this.halCooldown = 4;
     }
 
-    // Deferred level-up modifier pick
-    if (this.pendingLevelUpPick && !this.modifierPickPending) {
-      this.pendingLevelUpPick = false;
+    // Deferred level-up modifier pick (one per tick, drains queue)
+    if (this.pendingLevelUpPicks > 0 && !this.modifierPickPending && this.activeModifiers.length < 12) {
+      this.pendingLevelUpPicks--;
       this.offerModifierPick();
     }
 
@@ -638,8 +638,10 @@ export class Game {
 
     // PAYLOAD ESCORT: pod moves toward exit, player must stay near
     if (this.contractType === 'payload_escort' && !this.complete) {
+      const podX = WORLD_W * this.podProgress;
+      const podY = WORLD_H / 2;
       const podSpeed = 40; // px/s
-      const nearPlayer = v2dist(this.player.pos, { x: WORLD_W * this.podProgress, y: WORLD_H / 2 }) < 250;
+      const nearPlayer = v2dist(this.player.pos, { x: podX, y: podY }) < 250;
       if (nearPlayer && this.podHp > 0) {
         this.podProgress += (podSpeed / WORLD_W) * dt;
       }
@@ -765,9 +767,7 @@ export class Game {
         this.player.maxHp += 1;
         this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
         // Queue modifier pick for next update tick
-        if (this.activeModifiers.length < 6) {
-          this.pendingLevelUpPick = true;
-        }
+        this.pendingLevelUpPicks++;
       }
     }
 
@@ -841,6 +841,65 @@ export class Game {
     const px = this.player.pos.x, py = this.player.pos.y, pr = this.player.radius;
     const pAlpha = this.player.iFrames > 0 ? 0.4 : 1;
     const hit = this.player.hitFlash > 0;
+
+    // Payload escort pod rendering
+    if (this.contractType === 'payload_escort' && this.podHp > 0) {
+      const podX = WORLD_W * this.podProgress;
+      const podY = WORLD_H / 2;
+      // Pod body
+      g.circle(podX, podY, 20).fill({ color: 0x4db3e6, alpha: 0.8 });
+      g.circle(podX, podY, 20).stroke({ color: 0x88ddff, width: 2, alpha: 0.9 });
+      g.circle(podX, podY, 30).stroke({ color: 0x4db3e6, width: 1, alpha: 0.3 + Math.sin(this.elapsed * 3) * 0.15 });
+      // Pod HP bar
+      const podHpFrac = this.podHp / this.podMaxHp;
+      const bw = 50;
+      g.rect(podX - bw / 2, podY - 35, bw, 4).fill({ color: 0x110000, alpha: 0.8 });
+      g.rect(podX - bw / 2, podY - 35, bw * podHpFrac, 4).fill({ color: 0x4db3e6, alpha: 0.9 });
+      // Proximity ring (250px)
+      g.circle(podX, podY, 250).stroke({ color: 0x4db3e6, width: 1, alpha: 0.15 });
+      // Off-screen arrow indicator
+      const camCx = this.camera.x + this.camera.vw / 2;
+      const camCy = this.camera.y + this.camera.vh / 2;
+      const dx = podX - camCx, dy = podY - camCy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+        const angle = Math.atan2(dy, dx);
+        const arrowDist = 120;
+        const ax = px + Math.cos(angle) * arrowDist;
+        const ay = py + Math.sin(angle) * arrowDist;
+        const sz = 8;
+        g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
+         .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
+         .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
+         .closePath().fill({ color: 0x4db3e6, alpha: 0.8 });
+      }
+    }
+
+    // Void breach hold zone indicator
+    if (this.contractType === 'void_breach' && !this.complete) {
+      const cx = WORLD_W / 2, cy = WORLD_H / 2;
+      const pulse = 0.3 + Math.sin(this.elapsed * 2) * 0.1;
+      g.circle(cx, cy, 300).stroke({ color: 0x9919e6, width: 2, alpha: pulse });
+      g.circle(cx, cy, 300).fill({ color: 0x9919e6, alpha: 0.05 });
+      // Progress text in HUD is handled separately, but show center marker
+      g.circle(cx, cy, 8).fill({ color: 0x9919e6, alpha: 0.6 + Math.sin(this.elapsed * 4) * 0.2 });
+      // Off-screen arrow to zone center
+      const camCx = this.camera.x + this.camera.vw / 2;
+      const camCy = this.camera.y + this.camera.vh / 2;
+      const dx = cx - camCx, dy = cy - camCy;
+      const dist = Math.sqrt(dx * dx + dy * dy);
+      if (dist > Math.max(this.camera.vw, this.camera.vh) * 0.4) {
+        const angle = Math.atan2(dy, dx);
+        const arrowDist = 120;
+        const ax = px + Math.cos(angle) * arrowDist;
+        const ay = py + Math.sin(angle) * arrowDist;
+        const sz = 8;
+        g.moveTo(ax + Math.cos(angle) * sz, ay + Math.sin(angle) * sz)
+         .lineTo(ax + Math.cos(angle + 2.5) * sz, ay + Math.sin(angle + 2.5) * sz)
+         .lineTo(ax + Math.cos(angle - 2.5) * sz, ay + Math.sin(angle - 2.5) * sz)
+         .closePath().fill({ color: 0x9919e6, alpha: 0.8 });
+      }
+    }
 
     // Player glow ring (always drawn, even with sprite)
     g.circle(px, py, pr * 2.2).fill({ color: 0x0066aa, alpha: 0.06 * pAlpha });
