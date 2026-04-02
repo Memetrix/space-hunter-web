@@ -5,7 +5,7 @@ import { Player } from './Player';
 import { WeaponSystem } from './Weapons';
 import { EnemySystem, type Enemy, createEnemy } from './Enemies';
 import { HUD } from './HUD';
-import { v2dist, v2, randRange } from '../lib/math';
+import { v2dist, v2, v2sub, v2norm, v2mul, randRange } from '../lib/math';
 import {
   PLAYER_BASE_HP, PLAYER_BASE_SPEED, WORLD_W, WORLD_H,
   PLAYER_COLOR, XP_PER_LEVEL, MAX_LEVEL
@@ -53,7 +53,7 @@ function angleTo8Dir(vx: number, vy: number): string {
 // Sprites that have 8-direction folders
 const SPRITES_WITH_DIRS = ['player', 'void_leech', 'shadow_crawler', 'abyss_worm', 'nether_stalker', 'cave_lurker', 'tide_wraith'];
 
-// ââ Void breach zone interface ââ
+// Ã¢ÂÂÃ¢ÂÂ Void breach zone interface Ã¢ÂÂÃ¢ÂÂ
 interface VoidBreachZone {
   id: number;
   pos: { x: number; y: number };
@@ -63,7 +63,7 @@ interface VoidBreachZone {
   radius: number;
 }
 
-// ââ Extraction cache interface ââ
+// Ã¢ÂÂÃ¢ÂÂ Extraction cache interface Ã¢ÂÂÃ¢ÂÂ
 interface ExtractionCache {
   id: number;
   pos: { x: number; y: number };
@@ -126,6 +126,14 @@ export class Game {
 
   // Explosion effects
   explosions: Array<{ x: number; y: number; radius: number; maxRadius: number; life: number; maxLife: number }> = [];
+
+  // Active turrets
+  turrets: Array<{
+    x: number; y: number;
+    life: number; maxLife: number;
+    fireTimer: number; fireRate: number;
+    damage: number; range: number;
+  }> = [];
 
   // Weapon leveling
   weaponLevel = 0;
@@ -285,7 +293,7 @@ export class Game {
     this.hud.showMessage('HUNT STARTED', 2);
     setTimeout(() => this.hud.showHalMessage(halSay(HAL_HUNT_START), 5), 2500);
 
-    // ââ Contract-specific setup ââ
+    // Ã¢ÂÂÃ¢ÂÂ Contract-specific setup Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'void_breach') {
       this.spawnBreaches();
     }
@@ -301,7 +309,7 @@ export class Game {
     this.setupInput();
   }
 
-  // ââ Extraction: spawn caches across the map ââ
+  // Ã¢ÂÂÃ¢ÂÂ Extraction: spawn caches across the map Ã¢ÂÂÃ¢ÂÂ
   private spawnCaches() {
     this.caches = [];
     for (let i = 0; i < this.cacheCount; i++) {
@@ -328,7 +336,7 @@ export class Game {
     }
   }
 
-  // ââ Void Breach: spawn sequential breach zones ââ
+  // Ã¢ÂÂÃ¢ÂÂ Void Breach: spawn sequential breach zones Ã¢ÂÂÃ¢ÂÂ
   private spawnBreaches() {
     const BREACH_COUNT = 3;
     const perBreachTime = this.holdTime / BREACH_COUNT;
@@ -361,7 +369,7 @@ export class Game {
     this.hud.showMessage(`BREACH 1/${BREACH_COUNT} DETECTED`, 2);
   }
 
-  // ââ Boss Hunt: spawn an apex enemy ââ
+  // Ã¢ÂÂÃ¢ÂÂ Boss Hunt: spawn an apex enemy Ã¢ÂÂÃ¢ÂÂ
   private spawnApex() {
     if (this.apexSpawned) return;
     this.apexSpawned = true;
@@ -626,8 +634,16 @@ export class Game {
         this.player.pos.y = Math.max(0, Math.min(WORLD_H, this.player.pos.y));
         break;
       }
+      case 'turret_kit':
+        this.turrets.push({
+          x: this.player.pos.x,
+          y: this.player.pos.y,
+          life: 12, maxLife: 12,
+          fireTimer: 0, fireRate: 0.35,
+          damage: 2, range: 250,
+        });
+        break;
       default:
-        this.hud.showMessage(kdef.name.toUpperCase() + ' USED', 1.5);
         break;
     }
     this.kitCooldowns[kitId] = kdef.cooldown;
@@ -758,7 +774,7 @@ export class Game {
     // Enemies update
     this.enemies.update(dt, this.player, this.map);
 
-    // ââ Payload escort: enemies damage pod ââ
+    // Ã¢ÂÂÃ¢ÂÂ Payload escort: enemies damage pod Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'payload_escort' && this.podHp > 0) {
       const podX = WORLD_W * this.podProgress;
       const podY = WORLD_H / 2;
@@ -815,13 +831,50 @@ export class Game {
       if (ex.life <= 0) this.explosions.splice(i, 1);
     }
 
+    // Update turrets
+    for (let i = this.turrets.length - 1; i >= 0; i--) {
+      const t = this.turrets[i];
+      t.life -= dt;
+      if (t.life <= 0) { this.turrets.splice(i, 1); continue; }
+      t.fireTimer -= dt;
+      if (t.fireTimer <= 0) {
+        // Find nearest enemy in range
+        let nearest: { pos: { x: number; y: number }; id: number } | null = null;
+        let nearDist = t.range;
+        for (const e of this.enemies.enemies) {
+          const d = v2dist({ x: t.x, y: t.y }, e.pos);
+          if (d < nearDist) { nearest = e; nearDist = d; }
+        }
+        if (nearest) {
+          t.fireTimer = t.fireRate;
+          const dir = v2norm(v2sub(nearest.pos, { x: t.x, y: t.y }));
+          const vel = v2mul(dir, 400);
+          this.weapons.bullets.push({
+            pos: { x: t.x, y: t.y },
+            vel,
+            radius: 3,
+            color: 0x44ffaa,
+            damage: t.damage,
+            life: 0.8,
+            maxLife: 0.8,
+            piercing: false,
+            homing: false,
+            bounces: 0,
+            aoeRadius: 0,
+            fromPlayer: true,
+            hitSet: new Set(),
+          });
+        }
+      }
+    }
+
     // Adrenaline timer (for modifier)
     if (this.adrenalineTimer > 0) {
       this.adrenalineTimer -= dt;
       if (this.adrenalineTimer <= 0) this.adrenalineKills = 0;
     }
 
-    // ââ Extraction: cache collection ââ
+    // Ã¢ÂÂÃ¢ÂÂ Extraction: cache collection Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'extraction_run') {
       for (const cache of this.caches) {
         if (cache.collected) continue;
@@ -835,7 +888,7 @@ export class Game {
       }
     }
 
-    // ââ Boss Hunt: spawn apex after wave 2 ââ
+    // Ã¢ÂÂÃ¢ÂÂ Boss Hunt: spawn apex after wave 2 Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'boss_hunt' && !this.apexSpawned && this.waveCount >= 2) {
       this.spawnApex();
     }
@@ -867,7 +920,7 @@ export class Game {
       setTimeout(() => this.finishHunt('FAILED'), 2000);
     }
 
-    // ââ Contract completion checks ââ
+    // Ã¢ÂÂÃ¢ÂÂ Contract completion checks Ã¢ÂÂÃ¢ÂÂ
 
     // VOID BREACH: sequential breach zones
     if (this.contractType === 'void_breach' && !this.complete && this.breaches.length > 0) {
@@ -1123,7 +1176,7 @@ export class Game {
     const pAlpha = this.player.iFrames > 0 ? 0.4 : 1;
     const hit = this.player.hitFlash > 0;
 
-    // ââ Payload escort pod rendering ââ
+    // Ã¢ÂÂÃ¢ÂÂ Payload escort pod rendering Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'payload_escort' && this.podHp > 0) {
       const podX = WORLD_W * this.podProgress;
       const podY = WORLD_H / 2;
@@ -1155,7 +1208,7 @@ export class Game {
       }
     }
 
-    // ââ Void breach zones rendering ââ
+    // Ã¢ÂÂÃ¢ÂÂ Void breach zones rendering Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'void_breach') {
       for (const breach of this.breaches) {
         const bx = breach.pos.x, by = breach.pos.y;
@@ -1221,7 +1274,7 @@ export class Game {
       }
     }
 
-    // ââ Extraction caches rendering ââ
+    // Ã¢ÂÂÃ¢ÂÂ Extraction caches rendering Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'extraction_run') {
       for (const cache of this.caches) {
         if (cache.collected) continue;
@@ -1255,7 +1308,7 @@ export class Game {
       }
     }
 
-    // ââ Boss Hunt apex indicator ââ
+    // Ã¢ÂÂÃ¢ÂÂ Boss Hunt apex indicator Ã¢ÂÂÃ¢ÂÂ
     if (this.contractType === 'boss_hunt' && this.apexSpawned) {
       const apex = this.enemies.enemies.find(e => e.id === this.apexId);
       if (apex) {
@@ -1371,6 +1424,25 @@ export class Game {
       g.circle(b.pos.x, b.pos.y, b.radius * 3).fill({ color: b.color, alpha: 0.1 });
       g.circle(b.pos.x, b.pos.y, b.radius * 1.5).fill({ color: b.color, alpha: 0.8 });
       g.circle(b.pos.x, b.pos.y, b.radius * 0.8).fill({ color: 0xffffff, alpha: 0.6 });
+    }
+
+    // Draw turrets
+    for (const t of this.turrets) {
+      if (!this.camera.isVisible(t.x, t.y, 20)) continue;
+      const alpha = Math.min(t.life / 2, 1);
+      // Base
+      g.circle(t.x, t.y, 14).fill({ color: 0x112211, alpha: alpha * 0.9 });
+      g.circle(t.x, t.y, 14).stroke({ color: 0x44ffaa, width: 2, alpha: alpha * 0.8 });
+      // Barrel
+      g.circle(t.x, t.y, 6).fill({ color: 0x44ffaa, alpha: alpha * 0.7 });
+      g.circle(t.x, t.y, 3).fill({ color: 0xffffff, alpha: alpha * 0.6 });
+      // Range indicator
+      g.circle(t.x, t.y, t.range).stroke({ color: 0x44ffaa, width: 1, alpha: alpha * 0.08 });
+      // Life bar above turret
+      const barW = 20;
+      const frac = t.life / t.maxLife;
+      g.rect(t.x - barW / 2, t.y - 22, barW, 3).fill({ color: 0x111111, alpha: alpha * 0.7 });
+      g.rect(t.x - barW / 2, t.y - 22, barW * frac, 3).fill({ color: 0x44ffaa, alpha: alpha * 0.9 });
     }
 
     // Draw explosions
