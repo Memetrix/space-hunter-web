@@ -23,7 +23,7 @@ export class HUD {
   timerText: Text;
   levelText: Text;
   messageText: Text;
-  halStripText: Text;     // HAL commentary strip â bottom center
+  halStripText: Text;     // HAL commentary strip Ã¢ÂÂ bottom center
   messageDuration = 0;
   halStripDuration = 0;
   viewW: number;
@@ -56,13 +56,13 @@ export class HUD {
     this.halStripDuration = duration;
   }
 
-  draw(player: Player, dt: number, kills: number, elapsed: number, kits: string[]) {
+  draw(player: Player, dt: number, kills: number, elapsed: number, kits: string[], kitCooldowns: Record<string, number> = {}) {
     const g = this.gfx;
     g.clear();
     const L = 16;
     const R = this.viewW - 16;
 
-    // ââ TOP-LEFT: VITAL SIGNS ââ
+    // Ã¢ÂÂÃ¢ÂÂ TOP-LEFT: VITAL SIGNS Ã¢ÂÂÃ¢ÂÂ
     let y = 16;
 
     // HP bar
@@ -102,7 +102,7 @@ export class HUD {
     this.weaponText.x = L;
     this.weaponText.y = y;
 
-    // ââ TOP-RIGHT: CORRUPTION + STATS ââ
+    // Ã¢ÂÂÃ¢ÂÂ TOP-RIGHT: CORRUPTION + STATS Ã¢ÂÂÃ¢ÂÂ
     y = 16;
     const corrW = 130;
     const corrH = 16;
@@ -135,7 +135,7 @@ export class HUD {
     this.timerText.x = corrX;
     this.timerText.y = y;
 
-    // ââ BOTTOM: XP BAR ââ
+    // Ã¢ÂÂÃ¢ÂÂ BOTTOM: XP BAR Ã¢ÂÂÃ¢ÂÂ
     const xpH = 8;
     const xpY = this.viewH - xpH;
     const xpThreshold = player.level < MAX_LEVEL ? (XP_PER_LEVEL[player.level] ?? 999) : 210;
@@ -191,12 +191,12 @@ export class HUD {
       this._kitNameTexts[i].alpha = onCooldown ? 0.5 : 0.8;
     }
 
-    // ââ SCAN LINES ââ
+    // Ã¢ÂÂÃ¢ÂÂ SCAN LINES Ã¢ÂÂÃ¢ÂÂ
     for (let sl = 0; sl < this.viewH; sl += 4) {
       g.rect(0, sl, this.viewW, 1).fill({ color: 0x000000, alpha: 0.04 });
     }
 
-    // ââ CORNER BRACKETS ââ
+    // Ã¢ÂÂÃ¢ÂÂ CORNER BRACKETS Ã¢ÂÂÃ¢ÂÂ
     const bs = 28;
     const bc = 0xff2200;
     const ba = 0.25;
@@ -205,7 +205,7 @@ export class HUD {
     g.moveTo(0, this.viewH - bs).lineTo(0, this.viewH).lineTo(bs, this.viewH).stroke({ color: bc, width: 1.5, alpha: ba });
     g.moveTo(this.viewW - bs, this.viewH).lineTo(this.viewW, this.viewH).lineTo(this.viewW, this.viewH - bs).stroke({ color: bc, width: 1.5, alpha: ba });
 
-    // ââ JOYSTICK ââ
+    // Ã¢ÂÂÃ¢ÂÂ JOYSTICK Ã¢ÂÂÃ¢ÂÂ
     if (player.joyActive) {
       g.circle(player.joyBase.x, player.joyBase.y, 70).stroke({ color: 0xff2200, alpha: 0.18, width: 1.5 });
       g.circle(player.joyBase.x, player.joyBase.y, 45).stroke({ color: 0xff2200, alpha: 0.12, width: 1 });
@@ -215,7 +215,7 @@ export class HUD {
       g.circle(player.joyKnob.x, player.joyKnob.y, 18).stroke({ color: 0xff4400, alpha: 0.55, width: 2.5 });
     }
 
-    // ââ CENTER MESSAGE ââ
+    // Ã¢ÂÂÃ¢ÂÂ CENTER MESSAGE Ã¢ÂÂÃ¢ÂÂ
     if (this.messageDuration > 0) {
       this.messageDuration -= dt;
       this.messageText.x = this.viewW / 2;
@@ -225,7 +225,7 @@ export class HUD {
       this.messageText.alpha = 0;
     }
 
-    // ââ HAL COMMENTARY STRIP â bottom center, above XP bar ââ
+    // Ã¢ÂÂÃ¢ÂÂ HAL COMMENTARY STRIP Ã¢ÂÂ bottom center, above XP bar Ã¢ÂÂÃ¢ÂÂ
     if (this.halStripDuration > 0) {
       this.halStripDuration -= dt;
       const alpha = Math.min(this.halStripDuration, 1);
