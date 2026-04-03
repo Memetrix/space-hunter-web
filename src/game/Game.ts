@@ -959,10 +959,8 @@ export class Game {
         this.halCooldown = 5;
       }
 
-      // Queue upgrade pick every 2nd wave
-      if (this.waveCount > 0 && this.waveCount % 2 === 0 && !this.upgradePending) {
-        this.pendingLevelUpPicks++;
-      }
+      // Wave-based upgrades removed — level ups from XP are the only trigger
+      // (avoids double-stacking with XP level ups early game)
     }
 
     // Death check
