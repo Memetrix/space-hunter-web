@@ -158,6 +158,8 @@ export class Game {
   complete = false;
   equippedKits: string[] = [];
   contractType = 'hunt';
+  contractDifficulty = 1;
+  contractBaseReward = 0;
   targetTotal = 10;
   targetCount = 0;
   hpBonus = 0;
@@ -223,7 +225,7 @@ export class Game {
     hpBonus: number,
     magBonus: number,
     callbacks: GameCallbacks,
-    contractExtras?: { holdTime?: number; podHp?: number; cacheCount?: number }
+    contractExtras?: { holdTime?: number; podHp?: number; cacheCount?: number; difficulty?: number; baseReward?: number; consumables?: string[] }
   ) {
     this.app = app;
     this.callbacks = callbacks;
@@ -232,6 +234,8 @@ export class Game {
     this.targetTotal = targetTotal;
     this.hpBonus = hpBonus;
     this.magBonus = magBonus;
+    this.contractDifficulty = contractExtras?.difficulty ?? 1;
+    this.contractBaseReward = contractExtras?.baseReward ?? 0;
 
     // Initialize kit cooldowns and run-local kit tiers
     for (const kit of kits) {
@@ -258,11 +262,18 @@ export class Game {
     this.map = new GameMap();
     this.map.generate();
 
-    const maxHp = PLAYER_BASE_HP + hpBonus * 2;
-    const magSize = 12 + magBonus * 3;
+    const consumables = contractExtras?.consumables ?? [];
+    const maxHp = PLAYER_BASE_HP + hpBonus * 2 + (consumables.includes('medkit') ? 5 : 0);
+    const magSize = Math.floor((12 + magBonus * 3) * (consumables.includes('ammo_pack') ? 1.5 : 1));
     this.player = new Player(this.map.spawnPos.x, this.map.spawnPos.y, maxHp, magSize);
     this.weapons = new WeaponSystem();
     this.enemies = new EnemySystem();
+    // Consumable: stim_booster reduces kit cooldowns by 30%
+    if (consumables.includes('stim_booster')) {
+      for (const kit of this.equippedKits) {
+        this.kitCooldowns[kit] = -999; // start with kits ready instantly
+      }
+    }
     this.hud = new HUD(vw, vh);
 
     // Build scene graph
@@ -952,7 +963,7 @@ export class Game {
     if (this.waveTimer <= 0 && this.enemies.enemies.length < 50 && !this.modifierPickPending) {
       this.waveCount++;
       const count = 10 + this.waveCount * 3 + Math.floor(this.elapsed / 60) * 2;
-      this.enemies.spawnWave(Math.min(count, 30), this.player.pos, this.map);
+      this.enemies.spawnWave(Math.min(count, 30), this.player.pos, this.map, undefined, this.waveCount);
       this.waveTimer = Math.max(8, 20 - this.waveCount * 1.5);
       this.hud.showMessage(`WAVE ${this.waveCount + 1}`, 1.5);
       if (this.halCooldown <= 0) {
@@ -1154,10 +1165,14 @@ export class Game {
       }
     }
 
-    // Drop ingredient
+    // Drop ingredient (30% normal, 100% for elites)
     const def = CREATURE_DEFS[enemy.name];
-    if (def && Math.random() < 0.3) {
+    if (def && (enemy.isElite || Math.random() < 0.3)) {
       this.ingredients.push({ id: `ingredient_${def.ingredient.id}`, name: def.ingredient.name });
+    }
+    // Elites always drop elite_core as bonus
+    if (enemy.isElite) {
+      this.ingredients.push({ id: 'ingredient_elite_core', name: 'Elite Core' });
     }
   }
 
@@ -1710,7 +1725,12 @@ export class Game {
   }
 
   finishHunt(status: 'COMPLETED' | 'FAILED' | 'ABANDONED') {
-    const credits = Math.floor(this.totalKills * 5 + (status === 'COMPLETED' ? 50 : 10));
+    // Contract base reward (from contracts.ts formula) + kill bonus + difficulty multiplier
+    const killBonus = this.totalKills * 3;
+    const eliteBonus = this.eliteKills * 25 + this.apexKills * 100;
+    const completionReward = status === 'COMPLETED' ? this.contractBaseReward : Math.floor(this.contractBaseReward * 0.2);
+    const diffMult = 1 + (this.contractDifficulty - 1) * 0.25; // diff 1=1x, 2=1.25x, 3=1.5x
+    const credits = Math.floor((completionReward + killBonus + eliteBonus) * diffMult);
     this.callbacks.onHuntResult({
       credits,
       corruption: Math.floor(this.player.corruption),

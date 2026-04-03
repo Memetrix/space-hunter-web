@@ -24,6 +24,7 @@ export interface GameState {
   currentContract: Contract | null;
   startingWeapon: string;
   huntResult: HuntResult | null;
+  boughtConsumables: string[];
 }
 
 export interface GameActions {
@@ -31,6 +32,7 @@ export interface GameActions {
   setContract: (contract: Contract) => void;
   setWeapon: (weapon: string) => void;
   setHuntResult: (result: HuntResult) => void;
+  setBoughtConsumables: (ids: string[]) => void;
   startHunt: () => void;
 }
 
@@ -39,10 +41,12 @@ export const useGameStore = create<GameState & GameActions>((set) => ({
   currentContract: null,
   startingWeapon: 'sidearm',
   huntResult: null,
+  boughtConsumables: [],
 
   setScreen: (screen) => set({ screen }),
   setContract: (contract) => set({ currentContract: contract }),
   setWeapon: (weapon) => set({ startingWeapon: weapon }),
   setHuntResult: (result) => set({ huntResult: result }),
+  setBoughtConsumables: (ids) => set({ boughtConsumables: ids }),
   startHunt: () => set({ screen: 'hunt' }),
 }));

@@ -1,5 +1,6 @@
 import { type Vec2, v2, v2sub, v2norm, v2add, v2mul, v2dist, v2len, v2fromAngle, randRange, randInt, pick } from '../lib/math';
 import { CREATURE_DEFS, BIOME_POOLS, type CreatureDef } from '../data/creatures';
+import { ELITE_OVERRIDES, ELITE_EPITHETS } from '../data/elites';
 import { WORLD_W, WORLD_H, ENEMY_MELEE_RANGE, ENEMY_LEASH_DEFAULT } from './constants';
 import type { Player } from './Player';
 import type { GameMap } from './Map';
@@ -28,6 +29,7 @@ export interface Enemy {
   isElite: boolean;
   isTarget: boolean;
   hitFlash: number;
+  eliteName: string;  // '' for normal, 'Rift Colossus the Undying' for elites
   // Behavior state
   flankSide: number;
   flankTimer: number;
@@ -67,6 +69,7 @@ export function createEnemy(name: string, pos: Vec2, aggroed = false): Enemy {
     isElite: false,
     isTarget: false,
     hitFlash: 0,
+    eliteName: '',
     flankSide: Math.random() > 0.5 ? 1 : -1,
     flankTimer: 0,
     burstTimer: randRange(1, 3),
@@ -77,11 +80,39 @@ export function createEnemy(name: string, pos: Vec2, aggroed = false): Enemy {
   };
 }
 
+/** Promote a normal enemy to an elite with boosted stats */
+function promoteToElite(enemy: Enemy): void {
+  enemy.isElite = true;
+  const epithet = pick(ELITE_EPITHETS);
+  enemy.eliteName = `${enemy.name} ${epithet}`;
+
+  // Check for specific override
+  const overrideKeys = Object.keys(ELITE_OVERRIDES);
+  const override = overrideKeys.length > 0 ? ELITE_OVERRIDES[pick(overrideKeys)] : undefined;
+
+  if (override) {
+    if (override.hp) enemy.hp = override.hp;
+    if (override.hp) enemy.maxHp = override.hp;
+    if (override.speed !== undefined) enemy.speed = override.speed;
+    if (override.radius) enemy.radius = override.radius;
+    if (override.color) enemy.color = override.color;
+    if (override.meleeDmg) enemy.meleeDmg = override.meleeDmg;
+    if (override.rangedDmg) enemy.rangedDmg = override.rangedDmg;
+  } else {
+    // Generic elite: 5x HP, 1.2x speed, +1 melee damage
+    enemy.hp *= 5;
+    enemy.maxHp = enemy.hp;
+    enemy.speed *= 1.2;
+    enemy.meleeDmg += 1;
+    enemy.radius *= 1.3;
+  }
+}
+
 export class EnemySystem {
   enemies: Enemy[] = [];
   enemyBullets: Array<{ pos: Vec2; vel: Vec2; radius: number; damage: number; life: number; color: number }> = [];
 
-  spawnWave(count: number, playerPos: Vec2, map: GameMap, biome?: string) {
+  spawnWave(count: number, playerPos: Vec2, map: GameMap, biome?: string, waveNum = 0) {
     for (let i = 0; i < count; i++) {
       // Spawn away from player
       let pos: Vec2;
@@ -96,7 +127,14 @@ export class EnemySystem {
       const pool = BIOME_POOLS[spawnBiome] || BIOME_POOLS.open;
       const name = pick(pool);
       const aggroed = Math.random() < 0.6;
-      this.enemies.push(createEnemy(name, pos, aggroed));
+      const enemy = createEnemy(name, pos, aggroed);
+
+      // Elite chance: 0% wave 1-2, then 5% base + 2% per wave (max 20%)
+      if (waveNum >= 3 && Math.random() < Math.min(0.20, 0.05 + (waveNum - 3) * 0.02)) {
+        promoteToElite(enemy);
+      }
+
+      this.enemies.push(enemy);
     }
   }
 

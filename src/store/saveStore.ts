@@ -142,6 +142,10 @@ export const useSaveStore = create<SaveState & SaveActions>()(
       }),
 
       cookRecipe: (cost, track, rep, bonus, quality = 1) => set(s => {
+        // Validate pantry has enough ingredients
+        for (const [k, v] of Object.entries(cost)) {
+          if ((s.pantry[k] ?? 0) < v) return {}; // not enough — no-op
+        }
         const pantry = { ...s.pantry };
         for (const [k, v] of Object.entries(cost)) {
           pantry[k] = (pantry[k] ?? 0) - v;

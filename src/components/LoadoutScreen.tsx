@@ -6,18 +6,39 @@ import { useSaveStore } from '../store/saveStore';
 import { WEAPON_DEFS } from '../data/weapons';
 import { KIT_DEFS } from '../data/kits';
 
+const CONSUMABLES = [
+  { id: 'medkit', name: 'Medkit', desc: '+5 max HP this run', cost: 60, color: 'var(--color-accent-green)' },
+  { id: 'ammo_pack', name: 'Ammo Pack', desc: '+50% mag size this run', cost: 80, color: 'var(--color-accent-orange)' },
+  { id: 'scanner', name: 'Scanner', desc: 'Reveal elite spawns', cost: 100, color: 'var(--color-accent-cyan)' },
+  { id: 'stim_booster', name: 'Stim Booster', desc: 'Kit cooldowns -30%', cost: 120, color: 'var(--color-accent-purple)' },
+] as const;
+
 export function LoadoutScreen() {
   const contract = useGameStore(s => s.currentContract);
   const setScreen = useGameStore(s => s.setScreen);
   const setWeapon = useGameStore(s => s.setWeapon);
   const startHunt = useGameStore(s => s.startHunt);
+  const setBoughtConsumables = useGameStore(s => s.setBoughtConsumables);
   const save = useSaveStore();
   const [selected, setSelected] = useState('sidearm');
+  const [bought, setBought] = useState<Set<string>>(new Set());
 
   const available = save.getAvailableWeapons();
   const kitNames = save.equippedKits.map(id => KIT_DEFS[id]?.name ?? id);
 
+  const totalSpent = CONSUMABLES.filter(c => bought.has(c.id)).reduce((s, c) => s + c.cost, 0);
+
+  const buyConsumable = (id: string, cost: number) => {
+    if (bought.has(id) || save.totalCredits - totalSpent < cost) return;
+    setBought(prev => new Set(prev).add(id));
+  };
+
   const go = () => {
+    // Deduct consumable costs
+    if (totalSpent > 0) {
+      useSaveStore.setState(s => ({ totalCredits: s.totalCredits - totalSpent }));
+    }
+    setBoughtConsumables([...bought]);
     setWeapon(selected);
     startHunt();
   };
@@ -59,6 +80,33 @@ export function LoadoutScreen() {
           <div className="h-[2px] mt-1 opacity-40 bg-[var(--color-accent-purple)]" />
         </div>
         <p className="text-center text-base text-[var(--color-accent-green)] font-bold">{kitNames.join('  ·  ')}</p>
+
+        <div className="h-[1px] bg-[var(--color-border)]" />
+
+        <div>
+          <h3 className="text-base font-bold tracking-[2px] text-[var(--color-accent-gold)]">SUPPLIES</h3>
+          <div className="h-[2px] mt-1 opacity-40 bg-[var(--color-accent-gold)]" />
+          <p className="text-xs text-[var(--color-text-muted)] mt-1">One-time buffs for this hunt · {save.totalCredits - totalSpent}cr available</p>
+        </div>
+        {CONSUMABLES.map(c => {
+          const owned = bought.has(c.id);
+          const canAfford = save.totalCredits - totalSpent >= c.cost;
+          return (
+            <div key={c.id} className="pixel-card flex items-center gap-3 py-3">
+              <div className="flex-1">
+                <p className="text-sm font-bold" style={{ color: owned ? c.color : undefined }}>{c.name}</p>
+                <p className="text-xs text-[var(--color-text-secondary)] mt-1">{c.desc}</p>
+              </div>
+              <button
+                className="pixel-btn text-sm py-2 px-4"
+                style={owned ? { borderColor: c.color, background: `${c.color}22`, color: c.color } : { borderColor: 'var(--color-border-light)' }}
+                disabled={owned || !canAfford}
+                onClick={() => buyConsumable(c.id, c.cost)}>
+                {owned ? 'READY' : `${c.cost}cr`}
+              </button>
+            </div>
+          );
+        })}
       </div>
 
       <div className="px-4 pb-5 flex gap-4 justify-center">

@@ -17,6 +17,7 @@ export function GameCanvas() {
   const kits = useSaveStore(s => s.equippedKits);
   const hpUpgrade = useSaveStore(s => s.shipUpgrades.max_hp ?? 0);
   const magUpgrade = useSaveStore(s => s.shipUpgrades.mag_size ?? 0);
+  const consumables = useGameStore(s => s.boughtConsumables);
 
   // Legacy modifier picker state (kept for compat)
   const [modChoices, setModChoices] = useState<ModifierDef[] | null>(null);
@@ -90,7 +91,6 @@ export function GameCanvas() {
           onDeath: () => {},
           onComplete: () => {},
           onHuntResult: (r) => {
-            // Status is already set by Game.finishHunt — use it directly
             const status = gameRef.current?.dead ? 'FAILED' : r.totalKills >= (contract?.targetTotal ?? 10) ? 'COMPLETED' : 'FAILED';
             finishHunt(status, r);
           },
@@ -115,6 +115,9 @@ export function GameCanvas() {
           holdTime: contract?.holdTime,
           podHp: contract?.podHp,
           cacheCount: contract?.cacheCount,
+          difficulty: contract?.difficulty ?? 1,
+          baseReward: contract?.reward ?? 100,
+          consumables,
         }
       );
 
