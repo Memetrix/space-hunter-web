@@ -90,7 +90,8 @@ export function GameCanvas() {
           onDeath: () => {},
           onComplete: () => {},
           onHuntResult: (r) => {
-            const status = r.totalKills >= (contract?.targetTotal ?? 10) ? 'COMPLETED' : 'FAILED';
+            // Status is already set by Game.finishHunt — use it directly
+            const status = gameRef.current?.dead ? 'FAILED' : r.totalKills >= (contract?.targetTotal ?? 10) ? 'COMPLETED' : 'FAILED';
             finishHunt(status, r);
           },
           onWeaponPerkPick: (perks, weaponName, resolve) => {
