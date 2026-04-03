@@ -10,7 +10,7 @@ import {
 } from '../data/hal';
 
 const UPGRADE_DEFS = [
-  { id: 'max_hp', name: 'Reinforced Hull', desc: 'Max HP +2', cost: 80, maxLevel: 3 },
+  { id: 'max_hp', name: 'Reinforced Suit', desc: 'Max HP +2', cost: 80, maxLevel: 3 },
   { id: 'mag_size', name: 'Extended Magazine', desc: 'Mag Size +3', cost: 60, maxLevel: 3 },
   { id: 'xp_rate', name: 'Void Attunement', desc: 'XP Rate +10%', cost: 50, maxLevel: 3 },
   { id: 'loadout_slots', name: 'Extra Loadout', desc: '+1 slot', cost: 100, maxLevel: 2 },
@@ -89,7 +89,7 @@ export function HubScreen() {
               }}
               onClick={() => setTab(t)}
             >
-              {t}
+              {t === 'ship' ? 'hub' : t}
             </button>
           );
         })}
@@ -256,7 +256,7 @@ function UpgradesTab({ save }: { save: ReturnType<typeof useSaveStore.getState> 
   return (
     <>
       <p className="text-center text-base text-[var(--color-accent-gold)] font-bold">Credits: {save.totalCredits}</p>
-      <SectionHeader text="SHIP UPGRADES" color="var(--color-accent-cyan)" />
+      <SectionHeader text="SUIT UPGRADES" color="var(--color-accent-cyan)" />
       {UPGRADE_DEFS.map(def => {
         const level = save.shipUpgrades[def.id] ?? 0;
         const maxed = level >= def.maxLevel;
