@@ -117,7 +117,7 @@ export class WeaponSystem {
       }
 
       case 'arc_aoe':
-        return [makeBullet(angle, { aoeRadius: 80, life: def.range / def.bulletSpeed })];
+        return [makeBullet(angle, { aoeRadius: 80, life: def.range / def.bulletSpeed, radius: 4 })];
 
       case 'bounce':
         return [makeBullet(angle, { bounces: 3 })];

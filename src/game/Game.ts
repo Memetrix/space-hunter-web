@@ -852,7 +852,27 @@ export class Game {
     // Remove dead enemies
     this.enemies.enemies = this.enemies.enemies.filter(e => e.hp > 0);
 
-    // Remove expired bullets
+    // Remove expired bullets — AOE bullets explode on expiry (grenade landing)
+    for (const b of this.weapons.bullets) {
+      if (b.life <= 0 && b.aoeRadius > 0 && !b.hitSet.has(-999)) {
+        b.hitSet.add(-999);
+        this.explosions.push({
+          x: b.pos.x, y: b.pos.y,
+          radius: 0, maxRadius: b.aoeRadius,
+          life: 0.4, maxLife: 0.4,
+        });
+        // AOE damage at landing point
+        for (const enemy of this.enemies.enemies) {
+          if (v2dist(b.pos, enemy.pos) < b.aoeRadius) {
+            enemy.hp -= b.damage;
+            enemy.hitFlash = 0.1;
+            enemy.isAggroed = true;
+            this.damageDealt += b.damage;
+            if (enemy.hp <= 0) this.onEnemyKilled(enemy);
+          }
+        }
+      }
+    }
     this.weapons.bullets = this.weapons.bullets.filter(b => b.life > 0);
 
     // Update explosions
