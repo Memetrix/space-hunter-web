@@ -4,33 +4,29 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import type { Recipe } from '../data/recipes';
 import { halSay, HAL_COOKING, HAL_COOKING_PERFECT, HAL_COOKING_GOOD, HAL_COOKING_MEH } from '../data/hal';
 
-/* ── Tier config ─────────────────────────────────────────────── */
-const TIER_CFG: Record<number, { duration: number; spawnMs: number; speed: number; voidChance: number; goldenChance: number }> = {
-  1: { duration: 8, spawnMs: 600, speed: 120, voidChance: 0.10, goldenChance: 0.15 },
-  2: { duration: 10, spawnMs: 450, speed: 160, voidChance: 0.20, goldenChance: 0.10 },
-  3: { duration: 12, spawnMs: 350, speed: 200, voidChance: 0.30, goldenChance: 0.08 },
+const TIER_CFG: Record<number, { duration: number; spawnMs: number; lifeMs: number; voidChance: number; goldenChance: number; cols: number; rows: number }> = {
+  1: { duration: 10, spawnMs: 900,  lifeMs: 2000, voidChance: 0.10, goldenChance: 0.15, cols: 3, rows: 3 },
+  2: { duration: 12, spawnMs: 700,  lifeMs: 1600, voidChance: 0.20, goldenChance: 0.10, cols: 3, rows: 4 },
+  3: { duration: 14, spawnMs: 550,  lifeMs: 1300, voidChance: 0.25, goldenChance: 0.08, cols: 4, rows: 4 },
 };
 
-const ING_ICONS: Record<string, { emoji: string; color: string; label: string }> = {
-  rift_dust:     { emoji: '✦', color: '#e6cc4d', label: 'Dust' },
-  void_crystal:  { emoji: '◆', color: '#aa44ff', label: 'Crystal' },
-  cave_moss:     { emoji: '❋', color: '#4db366', label: 'Moss' },
-  river_silt:    { emoji: '◈', color: '#4d99e6', label: 'Silt' },
-  elite_core:    { emoji: '⬡', color: '#ffd900', label: 'Core' },
+const ING_ICONS: Record<string, { emoji: string; color: string }> = {
+  rift_dust:    { emoji: '✦', color: '#e6cc4d' },
+  void_crystal: { emoji: '◆', color: '#aa44ff' },
+  cave_moss:    { emoji: '❋', color: '#4db366' },
+  river_silt:   { emoji: '◈', color: '#4d99e6' },
+  elite_core:   { emoji: '⬡', color: '#ffd900' },
 };
 
-type ItemKind = 'normal' | 'golden' | 'void';
+type CellKind = 'empty' | 'normal' | 'golden' | 'void';
 
-interface FallingItem {
+interface Cell {
   id: number;
-  x: number;       // px from left
-  y: number;       // px from top
-  kind: ItemKind;
-  color: string;
+  kind: CellKind;
   emoji: string;
-  tapped: boolean;
-  size: number;
-  popAnim: boolean; // tap feedback
+  color: string;
+  spawnedAt: number;
+  lifeMs: number;
 }
 
 interface Props {
@@ -40,137 +36,130 @@ interface Props {
 }
 
 export function CookingGame({ recipe, onComplete, onCancel }: Props) {
+  const cfg = TIER_CFG[recipe.tier] ?? TIER_CFG[1];
+  const totalCells = cfg.cols * cfg.rows;
+
   const [phase, setPhase] = useState<'countdown' | 'cooking' | 'result'>('countdown');
   const [countdown, setCountdown] = useState(3);
-  const [progress, setProgress] = useState(0);
-  const [timeLeft, setTimeLeft] = useState(0);
+  const [score, setScore] = useState(0);
+  const [misses, setMisses] = useState(0);
+  const [timeLeft, setTimeLeft] = useState(cfg.duration);
   const [quality, setQuality] = useState(1);
   const [halMsg, setHalMsg] = useState(() => halSay(HAL_COOKING));
-  const [items, setItems] = useState<FallingItem[]>([]);
   const [combo, setCombo] = useState(0);
-  const [showCombo, setShowCombo] = useState(false);
-  const [floats, setFloats] = useState<Array<{ id: number; x: number; y: number; text: string; color: string }>>([]);
+  const [grid, setGrid] = useState<Cell[]>(() =>
+    Array.from({ length: totalCells }, (_, i) => ({ id: i, kind: 'empty' as CellKind, emoji: '', color: '', spawnedAt: 0, lifeMs: 0 }))
+  );
 
-  const cfg = TIER_CFG[recipe.tier] ?? TIER_CFG[1];
+  const scoreRef = useRef(0);
+  const missRef = useRef(0);
+  const comboRef = useRef(0);
+  const totalSpawned = useRef(0);
+  const gridRef = useRef(grid);
+  const nextIdRef = useRef(100);
+  const startRef = useRef(0);
   const frameRef = useRef(0);
   const lastSpawnRef = useRef(0);
-  const startTimeRef = useRef(0);
-  const nextIdRef = useRef(0);
-  const progressRef = useRef(0);
-  const comboRef = useRef(0);
-  const itemsRef = useRef<FallingItem[]>([]);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const floatIdRef = useRef(0);
 
-  // Ingredient visuals from recipe cost keys
-  const ingList = Object.keys(recipe.cost).map(k => ING_ICONS[k] ?? { emoji: '●', color: '#cc8866', label: k });
+  const ingList = Object.keys(recipe.cost).map(k => ING_ICONS[k] ?? { emoji: '●', color: '#cc8866' });
 
-  // 3-2-1 countdown
+  // Countdown
   useEffect(() => {
     if (phase !== 'countdown') return;
-    if (countdown <= 0) { setPhase('cooking'); return; }
-    const t = setTimeout(() => setCountdown(c => c - 1), 800);
+    if (countdown <= 0) {
+      setPhase('cooking');
+      return;
+    }
+    const t = setTimeout(() => setCountdown(c => c - 1), 700);
     return () => clearTimeout(t);
   }, [phase, countdown]);
 
-  const spawnItem = useCallback(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const cw = container.clientWidth;
-
-    const roll = Math.random();
-    let kind: ItemKind = 'normal';
-    const ing = ingList[Math.floor(Math.random() * ingList.length)];
-    let color = ing.color;
-    let emoji = ing.emoji;
-    let size = 52;
-
-    if (roll < cfg.voidChance) {
-      kind = 'void';
-      color = '#8800cc';
-      emoji = '☠';
-      size = 56;
-    } else if (roll < cfg.voidChance + cfg.goldenChance) {
-      kind = 'golden';
-      color = '#ffd700';
-      emoji = '★';
-      size = 58;
-    }
-
-    const item: FallingItem = {
-      id: nextIdRef.current++,
-      x: Math.floor(size / 2 + Math.random() * (cw - size)),
-      y: -size,
-      kind,
-      color,
-      emoji,
-      tapped: false,
-      size,
-      popAnim: false,
-    };
-    itemsRef.current = [...itemsRef.current, item];
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cfg, ingList]);
-
-  // Main game loop
+  // Game loop
   useEffect(() => {
     if (phase !== 'cooking') return;
 
-    startTimeRef.current = performance.now();
-    lastSpawnRef.current = startTimeRef.current;
-    progressRef.current = 0;
+    startRef.current = performance.now();
+    lastSpawnRef.current = 0;
+    scoreRef.current = 0;
+    missRef.current = 0;
     comboRef.current = 0;
-    itemsRef.current = [];
+    totalSpawned.current = 0;
 
-    let prevTime = startTimeRef.current;
+    // Reset grid
+    const emptyGrid: Cell[] = Array.from({ length: totalCells }, (_, i) => ({
+      id: i, kind: 'empty' as CellKind, emoji: '', color: '', spawnedAt: 0, lifeMs: 0,
+    }));
+    gridRef.current = emptyGrid;
+    setGrid([...emptyGrid]);
 
     const tick = (now: number) => {
-      const dt = (now - prevTime) / 1000;
-      prevTime = now;
-
-      const elapsed = (now - startTimeRef.current) / 1000;
+      const elapsed = (now - startRef.current) / 1000;
       const remaining = Math.max(0, cfg.duration - elapsed);
       setTimeLeft(remaining);
 
-      // Spawn
+      // Spawn new items in empty cells
       if (now - lastSpawnRef.current > cfg.spawnMs) {
-        spawnItem();
         lastSpawnRef.current = now;
-      }
 
-      // Move items
-      const containerH = containerRef.current?.clientHeight ?? 600;
-      const alive: FallingItem[] = [];
-      for (const item of itemsRef.current) {
-        if (item.tapped) continue;
-        item.y += cfg.speed * dt;
-        if (item.y > containerH + 20) {
-          if (item.kind !== 'void') {
-            progressRef.current = Math.max(0, progressRef.current - (item.kind === 'golden' ? 4 : 2));
-            comboRef.current = 0;
-            setCombo(0);
-            setShowCombo(false);
+        // Find empty cells
+        const emptyCells = gridRef.current
+          .map((c, i) => c.kind === 'empty' ? i : -1)
+          .filter(i => i >= 0);
+
+        if (emptyCells.length > 0) {
+          const idx = emptyCells[Math.floor(Math.random() * emptyCells.length)];
+          const roll = Math.random();
+          let kind: CellKind = 'normal';
+          const ing = ingList[Math.floor(Math.random() * ingList.length)];
+          let emoji = ing.emoji;
+          let color = ing.color;
+
+          if (roll < cfg.voidChance) {
+            kind = 'void';
+            emoji = '☠';
+            color = '#cc00ff';
+          } else if (roll < cfg.voidChance + cfg.goldenChance) {
+            kind = 'golden';
+            emoji = '★';
+            color = '#ffd700';
           }
-          continue;
+
+          gridRef.current[idx] = {
+            id: nextIdRef.current++,
+            kind, emoji, color,
+            spawnedAt: now,
+            lifeMs: cfg.lifeMs,
+          };
+          totalSpawned.current++;
         }
-        alive.push(item);
       }
-      itemsRef.current = alive;
 
-      setItems([...alive]);
-      setProgress(progressRef.current);
+      // Expire old items
+      for (let i = 0; i < gridRef.current.length; i++) {
+        const cell = gridRef.current[i];
+        if (cell.kind !== 'empty' && now - cell.spawnedAt > cell.lifeMs) {
+          if (cell.kind !== 'void') {
+            missRef.current++;
+            comboRef.current = 0;
+            setMisses(missRef.current);
+            setCombo(0);
+          }
+          gridRef.current[i] = { id: i, kind: 'empty', emoji: '', color: '', spawnedAt: 0, lifeMs: 0 };
+        }
+      }
 
-      // Time up
+      setGrid([...gridRef.current]);
+      setScore(scoreRef.current);
+
       if (remaining <= 0) {
-        const maxProgress = Math.floor(cfg.duration / (cfg.spawnMs / 1000)) * 2;
-        const pct = progressRef.current / maxProgress;
+        // Calculate quality
+        const total = totalSpawned.current;
+        const hitRate = total > 0 ? scoreRef.current / (total * 2) : 0;
         let q = 1;
-        if (pct >= 0.9) q = 3;
-        else if (pct >= 0.6) q = 2;
+        if (hitRate >= 0.8) q = 3;
+        else if (hitRate >= 0.5) q = 2;
 
         setQuality(q);
-        setProgress(progressRef.current);
-
         if (q === 3) setHalMsg(halSay(HAL_COOKING_PERFECT));
         else if (q === 2) setHalMsg(halSay(HAL_COOKING_GOOD));
         else setHalMsg(halSay(HAL_COOKING_MEH));
@@ -187,57 +176,38 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [phase]);
 
-  // Tap handler
-  const handleTap = useCallback((itemId: number, clientX: number, clientY: number) => {
-    const item = itemsRef.current.find(i => i.id === itemId);
-    if (!item || item.tapped) return;
-    item.tapped = true;
+  // Tap cell
+  const tapCell = useCallback((idx: number) => {
+    const cell = gridRef.current[idx];
+    if (cell.kind === 'empty') return;
 
-    // Float text
-    const rect = containerRef.current?.getBoundingClientRect();
-    const fx = clientX - (rect?.left ?? 0);
-    const fy = clientY - (rect?.top ?? 0);
-
-    if (item.kind === 'void') {
-      progressRef.current = Math.max(0, progressRef.current - 5);
+    if (cell.kind === 'void') {
+      // Penalty — lose combo, lose points
       comboRef.current = 0;
+      scoreRef.current = Math.max(0, scoreRef.current - 3);
       setCombo(0);
-      setShowCombo(false);
-      setFloats(f => [...f, { id: floatIdRef.current++, x: fx, y: fy, text: '-5', color: '#ff2200' }]);
     } else {
       comboRef.current++;
+      const mult = comboRef.current >= 5 ? 3 : comboRef.current >= 3 ? 2 : 1;
+      const pts = (cell.kind === 'golden' ? 4 : 2) * mult;
+      scoreRef.current += pts;
       setCombo(comboRef.current);
-      setShowCombo(comboRef.current >= 3);
-      const comboMult = comboRef.current >= 5 ? 2 : comboRef.current >= 3 ? 1.5 : 1;
-      const basePts = item.kind === 'golden' ? 6 : 2;
-      const pts = Math.floor(basePts * comboMult);
-      progressRef.current += pts;
-      setFloats(f => [...f, {
-        id: floatIdRef.current++, x: fx, y: fy,
-        text: `+${pts}${comboRef.current >= 3 ? ' x' + comboRef.current : ''}`,
-        color: item.kind === 'golden' ? '#ffd700' : item.color,
-      }]);
     }
 
-    itemsRef.current = itemsRef.current.filter(i => i.id !== itemId);
-    setItems([...itemsRef.current]);
-    setProgress(progressRef.current);
-
-    // Clear float after animation
-    setTimeout(() => {
-      setFloats(f => f.filter(fl => fl.id !== floatIdRef.current - 1));
-    }, 800);
+    // Clear cell
+    gridRef.current[idx] = { id: idx, kind: 'empty', emoji: '', color: '', spawnedAt: 0, lifeMs: 0 };
+    setGrid([...gridRef.current]);
+    setScore(scoreRef.current);
   }, []);
 
-  // Max possible progress for bar display
-  const maxProgress = Math.floor(cfg.duration / (cfg.spawnMs / 1000)) * 2;
-  const progressPct = Math.min(progress / maxProgress, 1);
-  const barColor = progressPct >= 0.9 ? '#ffd700' : progressPct >= 0.6 ? '#4db366' : progressPct >= 0.3 ? '#e6cc4d' : '#cc2200';
-  const stars = phase === 'result' ? quality : (progressPct >= 0.9 ? 3 : progressPct >= 0.6 ? 2 : progressPct >= 0.3 ? 1 : 0);
+  const maxScore = Math.floor(cfg.duration / (cfg.spawnMs / 1000)) * 2;
+  const pct = Math.min(score / maxScore, 1);
+  const barColor = pct >= 0.8 ? '#ffd700' : pct >= 0.5 ? '#4db366' : pct >= 0.2 ? '#e6cc4d' : '#cc2200';
+  const stars = phase === 'result' ? quality : (pct >= 0.8 ? 3 : pct >= 0.5 ? 2 : pct >= 0.2 ? 1 : 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: '#050508ee' }}>
-      <div className="w-full max-w-[540px] h-full flex flex-col" style={{ fontFamily: 'var(--font-pixel)' }}>
+      <div className="w-full max-w-[540px] h-full max-h-[900px] flex flex-col" style={{ fontFamily: 'var(--font-pixel)' }}>
 
         {/* Header */}
         <div className="px-4 pt-4 pb-2 text-center shrink-0">
@@ -245,99 +215,94 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
           <p className="text-lg font-bold text-[#cc8866]">{recipe.displayName}</p>
           {phase === 'cooking' && (
             <div className="flex items-center justify-center gap-4 mt-1">
-              <p className="text-base text-[#ff4400] font-mono">{timeLeft.toFixed(1)}s</p>
-              {showCombo && <p className="text-sm font-bold" style={{ color: '#ffd700' }}>x{combo} COMBO</p>}
+              <span className="text-base font-mono text-[#ff4400]">{timeLeft.toFixed(1)}s</span>
+              {combo >= 3 && <span className="text-sm font-bold text-[#ffd700]">x{combo} COMBO</span>}
             </div>
           )}
         </div>
 
         {/* Legend */}
-        {phase === 'cooking' && (
-          <div className="flex justify-center gap-4 px-3 pb-2 shrink-0">
-            {ingList.slice(0, 2).map((ing, i) => (
-              <span key={i} className="text-xs" style={{ color: ing.color }}>
-                <span className="text-sm">{ing.emoji}</span> TAP
-              </span>
-            ))}
-            <span className="text-xs" style={{ color: '#ffd700' }}>
-              <span className="text-sm">★</span> BONUS
+        {(phase === 'cooking' || phase === 'countdown') && (
+          <div className="flex justify-center gap-5 px-3 pb-2 shrink-0">
+            <span className="text-xs" style={{ color: ingList[0]?.color ?? '#cc8866' }}>
+              <span className="text-base">{ingList[0]?.emoji ?? '●'}</span> = TAP
             </span>
-            <span className="text-xs" style={{ color: '#cc00ff' }}>
-              <span className="text-sm">☠</span> AVOID
-            </span>
+            <span className="text-xs text-[#ffd700]"><span className="text-base">★</span> = BONUS</span>
+            <span className="text-xs text-[#cc00ff]"><span className="text-base">☠</span> = DON&apos;T TAP</span>
           </div>
         )}
 
-        {/* Game area */}
-        <div
-          ref={containerRef}
-          className="flex-1 relative overflow-hidden mx-3"
-          style={{ border: '1px solid #331a00', background: 'rgba(5,5,8,0.85)', minHeight: 0 }}
-        >
-          {/* Countdown */}
-          {phase === 'countdown' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-3">
-              <p className="text-5xl font-bold" style={{ color: '#ff4400', textShadow: '0 0 20px rgba(255,68,0,0.5)' }}>
+        {/* Grid area */}
+        <div className="flex-1 mx-3 flex items-center justify-center" style={{ minHeight: 0 }}>
+          {phase === 'countdown' ? (
+            <div className="text-center">
+              <p className="text-6xl font-bold" style={{ color: '#ff4400', textShadow: '0 0 24px rgba(255,68,0,0.5)' }}>
                 {countdown > 0 ? countdown : 'GO!'}
               </p>
-              <p className="text-sm text-[#886644]">Tap ingredients · Avoid ☠ void</p>
+              <p className="text-sm text-[#886644] mt-3">Tap ingredients before they fade</p>
             </div>
-          )}
-
-          {/* Falling items */}
-          {phase === 'cooking' && items.map(item => (
-            <button
-              key={item.id}
-              className="absolute flex items-center justify-center select-none"
+          ) : phase === 'cooking' || phase === 'result' ? (
+            <div
+              className="grid gap-2 w-full"
               style={{
-                left: item.x - item.size / 2,
-                top: item.y,
-                width: item.size,
-                height: item.size,
-                borderRadius: item.kind === 'void' ? '8px' : '50%',
-                background: item.kind === 'void'
-                  ? 'radial-gradient(circle, #660099 0%, #330044 100%)'
-                  : item.kind === 'golden'
-                    ? 'radial-gradient(circle, #ffee88 0%, #cc9900 100%)'
-                    : `radial-gradient(circle, ${item.color}cc 0%, ${item.color}66 100%)`,
-                boxShadow: item.kind === 'golden'
-                  ? '0 0 20px rgba(255,215,0,0.7), inset 0 0 10px rgba(255,255,255,0.3)'
-                  : item.kind === 'void'
-                    ? '0 0 20px rgba(136,0,204,0.7), inset 0 0 10px rgba(200,0,255,0.3)'
-                    : `0 0 12px ${item.color}55`,
-                border: item.kind === 'void'
-                  ? '2px solid #cc00ff'
-                  : item.kind === 'golden'
-                    ? '2px solid #ffee88'
-                    : `2px solid ${item.color}88`,
-                touchAction: 'manipulation',
-                transition: 'transform 0.08s',
-              }}
-              onPointerDown={(e) => { e.preventDefault(); handleTap(item.id, e.clientX, e.clientY); }}
-            >
-              <span style={{
-                fontSize: item.kind === 'void' ? 22 : item.kind === 'golden' ? 24 : 20,
-                color: item.kind === 'void' ? '#ff44ff' : item.kind === 'golden' ? '#fff' : '#fff',
-                textShadow: '0 0 6px rgba(0,0,0,0.8)',
-                filter: item.kind === 'void' ? 'drop-shadow(0 0 4px #cc00ff)' : 'none',
-              }}>
-                {item.emoji}
-              </span>
-            </button>
-          ))}
-
-          {/* Float text */}
-          {floats.map(f => (
-            <div key={f.id} className="absolute pointer-events-none font-bold text-sm"
-              style={{
-                left: f.x, top: f.y, color: f.color,
-                textShadow: '0 0 8px rgba(0,0,0,0.9)',
-                animation: 'floatUp 0.8s ease-out forwards',
+                gridTemplateColumns: `repeat(${cfg.cols}, 1fr)`,
+                maxWidth: cfg.cols * 100,
               }}
             >
-              {f.text}
+              {grid.map((cell, idx) => {
+                const isActive = cell.kind !== 'empty';
+                const age = isActive ? (performance.now() - cell.spawnedAt) / cell.lifeMs : 0;
+                const fading = age > 0.7;
+
+                return (
+                  <button
+                    key={idx}
+                    className="aspect-square flex items-center justify-center select-none transition-all duration-100"
+                    style={{
+                      background: isActive
+                        ? cell.kind === 'void'
+                          ? 'radial-gradient(circle, #440066 0%, #220033 100%)'
+                          : cell.kind === 'golden'
+                            ? 'radial-gradient(circle, #ffee66 0%, #996600 100%)'
+                            : `radial-gradient(circle, ${cell.color}88 0%, ${cell.color}33 100%)`
+                        : 'rgba(20,15,10,0.5)',
+                      border: isActive
+                        ? cell.kind === 'void'
+                          ? '2px solid #cc00ff'
+                          : cell.kind === 'golden'
+                            ? '2px solid #ffdd44'
+                            : `2px solid ${cell.color}88`
+                        : '1px solid #221100',
+                      borderRadius: cell.kind === 'void' ? '8px' : '12px',
+                      opacity: isActive ? (fading ? 0.4 : 1) : 0.3,
+                      boxShadow: isActive && !fading
+                        ? cell.kind === 'golden'
+                          ? '0 0 20px rgba(255,215,0,0.5), inset 0 0 10px rgba(255,255,200,0.2)'
+                          : cell.kind === 'void'
+                            ? '0 0 16px rgba(200,0,255,0.4)'
+                            : `0 0 12px ${cell.color}33`
+                        : 'none',
+                      transform: isActive && !fading ? 'scale(1)' : isActive ? 'scale(0.85)' : 'scale(0.9)',
+                      touchAction: 'manipulation',
+                    }}
+                    disabled={!isActive || phase === 'result'}
+                    onPointerDown={(e) => { e.preventDefault(); tapCell(idx); }}
+                  >
+                    {isActive && (
+                      <span style={{
+                        fontSize: cell.kind === 'golden' ? 28 : cell.kind === 'void' ? 26 : 24,
+                        color: cell.kind === 'void' ? '#ff66ff' : '#fff',
+                        textShadow: '0 0 8px rgba(0,0,0,0.9)',
+                        filter: cell.kind === 'golden' ? 'drop-shadow(0 0 6px #ffd700)' : 'none',
+                      }}>
+                        {cell.emoji}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
             </div>
-          ))}
+          ) : null}
 
           {/* Result overlay */}
           {phase === 'result' && (
@@ -355,6 +320,7 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
               }}>
                 {quality >= 3 ? 'PERFECT' : quality >= 2 ? 'GOOD' : 'BASIC'}
               </p>
+              <p className="text-base text-[#886644]">Score: {score} · Missed: {misses}</p>
               <p className="text-base text-[#cc8866]">
                 Reputation × {quality >= 3 ? '2.0' : quality >= 2 ? '1.5' : '1.0'}
               </p>
@@ -365,10 +331,9 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
         {/* Progress bar */}
         <div className="mx-3 mt-2 shrink-0">
           <div className="h-4 border border-[#331a00] relative" style={{ background: 'rgba(5,5,8,0.9)' }}>
-            <div className="h-full transition-all duration-150" style={{ width: `${progressPct * 100}%`, background: barColor }} />
-            {/* Star markers */}
-            <div className="absolute top-0 left-[60%] h-full w-px bg-[#886644] opacity-30" />
-            <div className="absolute top-0 left-[90%] h-full w-px bg-[#ffd700] opacity-30" />
+            <div className="h-full transition-all duration-200" style={{ width: `${pct * 100}%`, background: barColor }} />
+            <div className="absolute top-0 left-[50%] h-full w-px bg-[#886644] opacity-30" />
+            <div className="absolute top-0 left-[80%] h-full w-px bg-[#ffd700] opacity-30" />
           </div>
           <div className="flex justify-between mt-1">
             <span className="text-xs text-[#886644]">
@@ -376,7 +341,7 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
                 <span key={i} style={{ color: i <= stars ? '#ffd700' : '#221100' }}>★ </span>
               ))}
             </span>
-            <span className="text-xs font-mono text-[#886644]">{Math.round(progressPct * 100)}%</span>
+            <span className="text-xs font-mono text-[#886644]">{score} pts</span>
           </div>
         </div>
 
@@ -385,7 +350,7 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
           <p className="text-xs text-[#cc4422] leading-4">HAL: {halMsg}</p>
         </div>
 
-        {/* Bottom button */}
+        {/* Button */}
         <div className="px-4 py-3 shrink-0">
           {phase === 'cooking' ? (
             <button className="pixel-btn w-full" onClick={onCancel}>CANCEL</button>
@@ -396,14 +361,6 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
           ) : null}
         </div>
       </div>
-
-      {/* CSS for float animation */}
-      <style>{`
-        @keyframes floatUp {
-          0% { opacity: 1; transform: translateY(0); }
-          100% { opacity: 0; transform: translateY(-40px); }
-        }
-      `}</style>
     </div>
   );
 }
