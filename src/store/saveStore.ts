@@ -40,6 +40,19 @@ const DEFAULT_PANTRY: Record<string, number> = {
   rift_dust: 0, void_crystal: 0, cave_moss: 0, river_silt: 0, elite_core: 0,
 };
 
+/** Map creature drops → pantry ingredient types */
+const DROP_TO_PANTRY: Record<string, string> = {
+  void_extract: 'void_crystal',
+  void_core: 'void_crystal',
+  shadow_membrane: 'rift_dust',
+  nether_bile: 'rift_dust',
+  abyss_flesh: 'cave_moss',
+  cave_crystal: 'cave_moss',
+  rift_spore: 'river_silt',
+  tide_essence: 'river_silt',
+  cache_loot: 'elite_core',
+};
+
 export const useSaveStore = create<SaveState & SaveActions>()(
   persist(
     (set, get) => ({
@@ -121,7 +134,8 @@ export const useSaveStore = create<SaveState & SaveActions>()(
       addIngredients: (items) => set(s => {
         const pantry = { ...s.pantry };
         for (const item of items) {
-          const key = item.id.replace('ingredient_', '');
+          const raw = item.id.replace('ingredient_', '');
+          const key = DROP_TO_PANTRY[raw] ?? raw;
           pantry[key] = (pantry[key] ?? 0) + 1;
         }
         return { pantry };
