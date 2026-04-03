@@ -89,7 +89,7 @@ export class EnemySystem {
       do {
         pos = v2(randRange(100, WORLD_W - 100), randRange(100, WORLD_H - 100));
         attempts++;
-      } while (v2dist(pos, playerPos) < 400 && attempts < 20);
+      } while (v2dist(pos, playerPos) < 600 && attempts < 30);
 
       // Pick creature from biome pool
       const spawnBiome = biome || map.getBiome(pos.x, pos.y);

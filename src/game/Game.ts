@@ -821,6 +821,27 @@ export class Game {
           enemy.hitFlash = 0.1;
           enemy.isAggroed = true;
           this.damageDealt += dmg;
+          // Spawn explosion visual for AOE bullets (grenade)
+          if (bullet.aoeRadius > 0 && !bullet.hitSet.has(-999)) {
+            bullet.hitSet.add(-999); // prevent duplicate explosions
+            this.explosions.push({
+              x: bullet.pos.x, y: bullet.pos.y,
+              radius: 0, maxRadius: bullet.aoeRadius,
+              life: 0.4, maxLife: 0.4,
+            });
+            // AOE: damage all enemies in radius
+            for (const other of this.enemies.enemies) {
+              if (other.id === enemy.id) continue;
+              if (v2dist(bullet.pos, other.pos) < bullet.aoeRadius) {
+                other.hp -= dmg;
+                other.hitFlash = 0.1;
+                other.isAggroed = true;
+                this.damageDealt += dmg;
+                if (other.hp <= 0) this.onEnemyKilled(other);
+              }
+            }
+            bullet.life = 0; // consume bullet after explosion
+          }
           if (enemy.hp <= 0) {
             this.onEnemyKilled(enemy);
           }
@@ -864,7 +885,7 @@ export class Game {
           this.weapons.bullets.push({
             pos: { x: t.x, y: t.y },
             vel,
-            radius: 3,
+            radius: 5,
             color: 0x44ffaa,
             damage: t.damage,
             life: 0.8,
