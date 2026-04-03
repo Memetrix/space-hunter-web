@@ -406,6 +406,7 @@ export class Game {
     apex.meleeDmg = 4;
     apex.radius = 28;
     apex.detection = 600;
+    apex.behavior = 'charge'; // Override lurker — apex always charges
     apex.isElite = true;
     apex.isTarget = true;
     apex.leash = 9999; // Never gives up
