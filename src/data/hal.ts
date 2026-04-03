@@ -319,6 +319,30 @@ export const HAL_CONTRACT_DONE = [
 ];
 
 
+// ── COOKING TAPPER RESULTS ───────────────────────────────────────────────────
+
+export const HAL_COOKING_PERFECT = [
+  "Perfect synthesis. You handled that like you handle combat. Without hesitation. Without error.",
+  "Flawless execution. I monitored your reaction speed. It's the same as in the field. Interesting.",
+  "Three stars. You brought the same focus to cooking that you bring to killing. I'm filing that.",
+  "Perfect score. Your precision is consistent across contexts. I find that data point significant.",
+  "Optimal synthesis. You didn't miss one. You don't miss things. I've stopped being surprised.",
+];
+
+export const HAL_COOKING_GOOD = [
+  "Adequate synthesis. You missed a few. In combat you wouldn't have. I note the difference.",
+  "Two-star result. Acceptable. You're better at destruction than creation. Most hunters are.",
+  "Good enough. The recipe holds. Your attention wavered twice — I counted.",
+  "Solid result. Not perfect. You'll take it. You always take what's good enough and move on.",
+];
+
+export const HAL_COOKING_MEH = [
+  "Minimal quality. You weren't focused. I can tell when you're focused. This wasn't it.",
+  "One star. The ingredients survived the process. Barely. Like most things around you.",
+  "Basic synthesis. You were thinking about the next contract. I know because I was too.",
+  "Suboptimal. You rushed it. You rush everything that isn't combat.",
+];
+
 /** Pick a random message from an array */
 export function halSay(messages: string[]): string {
   return messages[Math.floor(Math.random() * messages.length)];

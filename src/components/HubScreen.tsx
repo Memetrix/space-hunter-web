@@ -3,11 +3,13 @@ import { useState, useMemo } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useSaveStore } from '../store/saveStore';
 import { RECIPES, BONUS_DESCS, TRACK_ORDER, REP_THRESHOLDS } from '../data/recipes';
+import type { Recipe } from '../data/recipes';
 import { KIT_DEFS, ALL_KIT_IDS } from '../data/kits';
 import {
   halSay, HAL_GREETINGS, HAL_FIRST_VISIT, HAL_PRE_CONTRACT,
   HAL_POST_HUNT_SUCCESS, HAL_POST_HUNT_FAIL, HAL_IDLE
 } from '../data/hal';
+import { CookingGame } from './CookingGame';
 
 const UPGRADE_DEFS = [
   { id: 'max_hp', name: 'Reinforced Suit', desc: 'Max HP +2', cost: 80, maxLevel: 3 },
@@ -197,6 +199,7 @@ function ShipTab({ save, huntResult, onContracts }: {
 
 function KitchenSection({ save }: { save: ReturnType<typeof useSaveStore.getState> }) {
   const cookRecipe = useSaveStore(s => s.cookRecipe);
+  const [cookingRecipe, setCookingRecipe] = useState<Recipe | null>(null);
 
   const canAfford = (cost: Record<string, number>) => {
     for (const [k, v] of Object.entries(cost)) {
@@ -211,8 +214,21 @@ function KitchenSection({ save }: { save: ReturnType<typeof useSaveStore.getStat
     return save.unlockedRecipes.includes(recipe.id);
   };
 
+  const handleCookComplete = (quality: number) => {
+    if (!cookingRecipe) return;
+    cookRecipe(cookingRecipe.cost, cookingRecipe.track, cookingRecipe.rep, cookingRecipe.bonus, quality);
+    setCookingRecipe(null);
+  };
+
   return (
     <div className="space-y-3">
+      {cookingRecipe && (
+        <CookingGame
+          recipe={cookingRecipe}
+          onComplete={handleCookComplete}
+          onCancel={() => setCookingRecipe(null)}
+        />
+      )}
       {TRACK_ORDER.map(track => {
         const color = TRACK_COLORS[track];
         const trackRecipes = Object.values(RECIPES).filter(r => r.track === track);
@@ -235,7 +251,7 @@ function KitchenSection({ save }: { save: ReturnType<typeof useSaveStore.getStat
                     className="pixel-btn text-sm py-2 px-4"
                     style={{ borderColor: color, color }}
                     disabled={!affordable}
-                    onClick={() => cookRecipe(r.cost, r.track, r.rep, r.bonus)}>
+                    onClick={() => setCookingRecipe(r)}>
                     Cook
                   </button>
                 </div>

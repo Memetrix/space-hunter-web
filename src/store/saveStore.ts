@@ -29,7 +29,7 @@ export interface SaveActions {
   upgradeKitTier: (id: string, newTier: number, cost: number) => void;
   assignKit: (kitId: string, slot: number) => void;
   addIngredients: (items: Array<{ id: string }>) => void;
-  cookRecipe: (cost: Record<string, number>, track: string, rep: number, bonus: string) => void;
+  cookRecipe: (cost: Record<string, number>, track: string, rep: number, bonus: string, quality?: number) => void;
   getRepLevel: (track: string) => number;
   getAvailableWeapons: () => string[];
   markIntroSeen: () => void;
@@ -127,13 +127,14 @@ export const useSaveStore = create<SaveState & SaveActions>()(
         return { pantry };
       }),
 
-      cookRecipe: (cost, track, rep, bonus) => set(s => {
+      cookRecipe: (cost, track, rep, bonus, quality = 1) => set(s => {
         const pantry = { ...s.pantry };
         for (const [k, v] of Object.entries(cost)) {
           pantry[k] = (pantry[k] ?? 0) - v;
         }
+        const multiplier = quality >= 3 ? 2 : quality >= 2 ? 1.5 : 1;
         const reputation = { ...s.reputation };
-        reputation[track] = (reputation[track] ?? 0) + rep;
+        reputation[track] = (reputation[track] ?? 0) + Math.round(rep * multiplier);
         const bonuses = { ...s.activeBonuses };
         if (bonus) bonuses[bonus] = true;
         return { pantry, reputation, activeBonuses: bonuses };
