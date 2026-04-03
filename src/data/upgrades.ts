@@ -1,11 +1,9 @@
 /**
- * 3-slot upgrade generation system.
- * Ported from Godot _generate_upgrades().
+ * Upgrade generation system — pool-based with rarity weighting.
  *
- * Slot 1: WEAPON — level perk, mutation fork, or mastery
- * Slot 2: KIT/RESONANCE — kit tier upgrade, resonance perk, or modifier fallback
- * Slot 3: MODIFIER — random from pool
- * + Up to 1 kit perk appended per screen
+ * Builds a pool of ALL available upgrades, assigns priority weights,
+ * then picks 3 cards weighted by rarity and type diversity.
+ * Each screen should feel different.
  */
 
 import { WEAPON_DEFS, WEAPON_LEVEL_PERKS, WEAPON_MUTATIONS, WEAPON_MASTERY } from './weapons';
@@ -31,7 +29,6 @@ export interface UpgradeCard {
   icon: string;
   label: string;
   desc: string;
-  // Type-specific payload
   weaponId?: string;
   mutationType?: 'clean' | 'void';
   kitId?: string;
@@ -42,12 +39,12 @@ export interface UpgradeCard {
 
 export interface ProgressionState {
   weaponId: string;
-  weaponLevel: number;       // 1-5
+  weaponLevel: number;
   weaponMutated: boolean;
-  weaponMutationType: string; // 'clean' | 'void' | ''
+  weaponMutationType: string;
   corruption: number;
   equippedKits: string[];
-  kitTiers: Record<string, number>;  // run-local kit tiers
+  kitTiers: Record<string, number>;
   kitPerksTaken: string[];
   masteryTaken: string[];
   resonanceTaken: string[];
@@ -64,16 +61,46 @@ function shuffle<T>(arr: T[]): T[] {
   return a;
 }
 
-export function generateUpgrades(state: ProgressionState): UpgradeCard[] {
-  const options: UpgradeCard[] = [];
-  const { weaponId, weaponLevel, weaponMutated, weaponMutationType, corruption } = state;
+/** Weighted random pick: higher weight = more likely to be chosen */
+function weightedPick<T>(items: T[], weights: number[]): T {
+  const total = weights.reduce((a, b) => a + b, 0);
+  let r = Math.random() * total;
+  for (let i = 0; i < items.length; i++) {
+    r -= weights[i];
+    if (r <= 0) return items[i];
+  }
+  return items[items.length - 1];
+}
 
-  // ── Slot 1: WEAPON ─���
+const RARITY_WEIGHT: Record<UpgradeRarity, number> = {
+  legendary: 5,
+  rare: 3,
+  common: 1.5,
+};
+
+const TYPE_WEIGHT: Record<UpgradeType, number> = {
+  mutation: 6,
+  resonance: 5,
+  mastery: 4,
+  weapon_upgrade: 3,
+  kit_tier: 3,
+  kit_perk: 2.5,
+  modifier: 1,
+  fallback: 0.5,
+};
+
+export function generateUpgrades(state: ProgressionState): UpgradeCard[] {
+  const pool: UpgradeCard[] = [];
+  const { weaponId, weaponLevel, weaponMutated, weaponMutationType, corruption } = state;
+  const usedModIds = new Set(state.modifiersTaken);
+
+  // ── WEAPON CARDS ──
+
   if (weaponLevel >= 5 && !weaponMutated && WEAPON_MUTATIONS[weaponId]) {
-    // Offer mutation cards based on corruption
+    // Mutation fork
     if (corruption < 35) {
       const mut = WEAPON_MUTATIONS[weaponId].clean;
-      options.push({
+      pool.push({
         type: 'mutation', id: `mut_${weaponId}_clean`, rarity: 'legendary',
         icon: mut.icon, label: mut.name, desc: mut.desc,
         weaponId, mutationType: 'clean',
@@ -81,27 +108,20 @@ export function generateUpgrades(state: ProgressionState): UpgradeCard[] {
     }
     if (corruption > 20) {
       const mut = WEAPON_MUTATIONS[weaponId].void;
-      options.push({
+      pool.push({
         type: 'mutation', id: `mut_${weaponId}_void`, rarity: 'legendary',
         icon: mut.icon, label: mut.name, desc: mut.desc,
         weaponId, mutationType: 'void',
       });
     }
-    // If no mutations available (corruption exactly 35 and <=20 — shouldn't happen but safety)
-    if (options.length === 0) {
-      const wdef = WEAPON_DEFS[weaponId];
-      options.push({
-        type: 'modifier', id: 'mastery_dmg', rarity: 'common',
-        icon: 'W', label: `Mastery: ${wdef?.name ?? weaponId}`, desc: '+2 damage',
-      });
-    }
   } else if (weaponLevel < 5) {
+    // Next weapon perk
     const nextLevel = weaponLevel + 1;
     const perks = WEAPON_LEVEL_PERKS[weaponId];
     if (perks && perks[nextLevel]) {
       const perk = perks[nextLevel];
       const wdef = WEAPON_DEFS[weaponId];
-      options.push({
+      pool.push({
         type: 'weapon_upgrade', id: `wperk_${weaponId}_${nextLevel}`,
         rarity: nextLevel >= 4 ? 'rare' : 'common',
         icon: perk.icon, label: `${wdef?.name ?? weaponId} — ${perk.name}`, desc: perk.desc,
@@ -109,170 +129,130 @@ export function generateUpgrades(state: ProgressionState): UpgradeCard[] {
       });
     } else {
       const wdef = WEAPON_DEFS[weaponId];
-      options.push({
+      pool.push({
         type: 'weapon_upgrade', id: `wperk_${weaponId}_${weaponLevel + 1}`,
         rarity: 'common', icon: 'W',
         label: `${wdef?.name ?? weaponId} Lv${weaponLevel + 1}`, desc: '+1 damage',
         weaponId, perkEffect: 'damage', perkValue: 1,
       });
     }
-  } else {
-    // Mutated — offer mastery perk
+    // Also add a generic weapon stat boost as alternative
+    const wdef = WEAPON_DEFS[weaponId];
+    pool.push({
+      type: 'modifier', id: 'mastery_dmg', rarity: 'common',
+      icon: 'W', label: `${wdef?.name ?? weaponId}: Raw Power`, desc: '+2 damage',
+    });
+  } else if (weaponMutated) {
+    // Mastery perks
     const masteryPool = WEAPON_MASTERY[weaponId]?.[weaponMutationType];
     if (masteryPool) {
       const available = shuffle(masteryPool.filter(mp => !state.masteryTaken.includes(mp.id)));
-      if (available.length > 0) {
-        const perk = available[0];
-        options.push({
+      // Add up to 2 mastery options
+      for (const perk of available.slice(0, 2)) {
+        pool.push({
           type: 'mastery', id: perk.id, rarity: 'rare',
-          icon: perk.icon, label: perk.name, desc: perk.desc,
-          weaponId,
-        });
-      } else {
-        const wdef = WEAPON_DEFS[weaponId];
-        options.push({
-          type: 'modifier', id: 'mastery_dmg', rarity: 'common',
-          icon: 'W', label: `Mastery: ${wdef?.name ?? weaponId}`, desc: '+2 damage',
+          icon: perk.icon, label: perk.name, desc: perk.desc, weaponId,
         });
       }
-    } else {
+    }
+    if (pool.length === 0) {
       const wdef = WEAPON_DEFS[weaponId];
-      options.push({
+      pool.push({
         type: 'modifier', id: 'mastery_dmg', rarity: 'common',
         icon: 'W', label: `Mastery: ${wdef?.name ?? weaponId}`, desc: '+2 damage',
       });
     }
   }
 
-  // ── Slot 2: KIT TIER, RESONANCE, or MODIFIER ──
-  let slot2Done = false;
+  // ── KIT CARDS ──
 
-  // Check if both kits are T3 — offer resonance
-  const bothT3 = state.equippedKits.length >= 2 &&
-    (state.kitTiers[state.equippedKits[0]] ?? 1) >= 3 &&
-    (state.kitTiers[state.equippedKits[1]] ?? 1) >= 3;
-
-  if (bothT3) {
-    const availRes = shuffle(
-      RESONANCE_POOL.filter(rp => {
-        if (state.resonanceTaken.includes(rp.id)) return false;
-        return rp.kits.every(k => state.equippedKits.includes(k));
-      })
-    );
-    if (availRes.length > 0) {
-      const rp = availRes[0];
-      options.push({
-        type: 'resonance', id: rp.id, rarity: 'legendary',
-        icon: rp.icon, label: rp.name, desc: rp.desc,
-      });
-      slot2Done = true;
-    }
-  }
-
-  if (!slot2Done) {
-    // Collect kits eligible for tier upgrade
-    const t3Eligible: string[] = [];
-    const t2Eligible: string[] = [];
-    for (const kid of state.equippedKits) {
-      const kt = state.kitTiers[kid] ?? 1;
-      if (kt === 2) t3Eligible.push(kid);
-      else if (kt < 2) t2Eligible.push(kid);
-    }
-
-    if (t3Eligible.length > 0) {
-      // Queue T3 path choices (handled by Game.ts kitT3Pending)
-      for (const kid of shuffle(t3Eligible)) {
-        if (!state.kitT3Pending.includes(kid)) {
-          state.kitT3Pending.push(kid);
-        }
-      }
-      slot2Done = true; // T3 path choice fires separately
-    } else if (t2Eligible.length > 0) {
-      const kid = t2Eligible[0];
+  // Kit tier upgrades
+  for (const kid of state.equippedKits) {
+    const kt = state.kitTiers[kid] ?? 1;
+    if (kt === 2 && !state.kitT3Pending.includes(kid)) {
+      state.kitT3Pending.push(kid);
+    } else if (kt < 2) {
       const kdef = KIT_DEFS[kid];
-      options.push({
+      pool.push({
         type: 'kit_tier', id: `kit_tier_${kid}_2`, rarity: 'rare',
         icon: kdef?.icon ?? 'K', label: `${kdef?.name ?? kid} Tier 2`,
         desc: '+1 max HP (tier upgrade)', kitId: kid, newTier: 2,
       });
-      slot2Done = true;
     }
   }
 
-  if (!slot2Done) {
-    // Fallback: random modifier for slot 2
-    const usedIds = new Set(state.modifiersTaken);
-    for (const o of options) if (o.type === 'modifier') usedIds.add(o.id);
-    const avail = shuffle(MODIFIER_DEFS.filter(m => !usedIds.has(m.id)));
-    if (avail.length > 0) {
-      const m = avail[0];
-      options.push({
-        type: 'modifier', id: m.id, rarity: m.rarity,
-        icon: m.rarity === 'rare' ? '★' : '◆', label: m.name, desc: m.desc,
-      });
-    }
-  }
-
-  // ── Slot 3: MODIFIER ──
-  {
-    const usedIds = new Set(state.modifiersTaken);
-    for (const o of options) if (o.type === 'modifier') usedIds.add(o.id);
-    const avail = shuffle(MODIFIER_DEFS.filter(m => !usedIds.has(m.id)));
-    if (avail.length > 0) {
-      const m = avail[0];
-      options.push({
-        type: 'modifier', id: m.id, rarity: m.rarity,
-        icon: m.rarity === 'rare' ? '★' : '◆', label: m.name, desc: m.desc,
-      });
-    }
-  }
-
-  // ── Kit Perk injection (max 1 per screen) ──
-  let bestKitPerk: UpgradeCard | null = null;
-  let bestIsRare = false;
+  // Kit perks (all available, not just best)
   for (const kid of state.equippedKits) {
     const perksForKit = KIT_PERKS[kid] ?? [];
     for (const kp of perksForKit) {
       if (state.kitPerksTaken.includes(kp.id)) continue;
-      const isRare = kp.rarity === 'rare';
-      if (!bestKitPerk || (isRare && !bestIsRare) || (isRare === bestIsRare && Math.random() < 0.5)) {
-        bestKitPerk = {
-          type: 'kit_perk', id: kp.id, rarity: kp.rarity,
-          icon: kp.icon, label: kp.name, desc: kp.desc,
-          kitId: kid,
-        };
-        bestIsRare = isRare;
-      }
-    }
-  }
-  if (bestKitPerk) {
-    options.push(bestKitPerk);
-  }
-
-  // ─�� Guaranteed fallbacks so panel is never empty ──
-  if (options.length < 3) {
-    const fallbacks: UpgradeCard[] = [
-      { type: 'fallback', id: 'hp_restore',    rarity: 'common', icon: 'H', label: 'Field Medkit',    desc: 'Restore 3 HP immediately' },
-      { type: 'fallback', id: 'void_drain_f',  rarity: 'common', icon: 'D', label: 'Void Drain',      desc: 'Killing void enemies reduces corruption by 3' },
-      { type: 'fallback', id: 'pack_hunter_f', rarity: 'common', icon: 'P', label: 'Pack Awareness',  desc: '+8% damage per enemy within 200px' },
-      { type: 'fallback', id: 'corr_purge',    rarity: 'rare',   icon: 'P', label: 'Void Purge',      desc: 'Reduce corruption by 20' },
-    ];
-    const existingIds = new Set(options.map(o => o.id));
-    for (const fb of shuffle(fallbacks)) {
-      if (options.length >= 3) break;
-      if (!existingIds.has(fb.id)) {
-        options.push(fb);
-        existingIds.add(fb.id);
-      }
+      pool.push({
+        type: 'kit_perk', id: kp.id, rarity: kp.rarity,
+        icon: kp.icon, label: kp.name, desc: kp.desc, kitId: kid,
+      });
     }
   }
 
-  // Cap at 3 cards (+ possible kit perk = 4 max)
-  // First 3 are the main slots, 4th is kit perk if present
-  if (options.length > 4) {
-    // Keep first card (weapon), then pick best remaining
-    return options.slice(0, 4);
+  // Resonance
+  const bothT3 = state.equippedKits.length >= 2 &&
+    (state.kitTiers[state.equippedKits[0]] ?? 1) >= 3 &&
+    (state.kitTiers[state.equippedKits[1]] ?? 1) >= 3;
+  if (bothT3) {
+    for (const rp of RESONANCE_POOL) {
+      if (state.resonanceTaken.includes(rp.id)) continue;
+      if (!rp.kits.every(k => state.equippedKits.includes(k))) continue;
+      pool.push({
+        type: 'resonance', id: rp.id, rarity: 'legendary',
+        icon: rp.icon, label: rp.name, desc: rp.desc,
+      });
+    }
   }
 
-  return options;
+  // ── MODIFIERS (add several for variety) ──
+  const availMods = shuffle(MODIFIER_DEFS.filter(m => !usedModIds.has(m.id)));
+  for (const m of availMods.slice(0, 4)) {
+    pool.push({
+      type: 'modifier', id: m.id, rarity: m.rarity,
+      icon: m.rarity === 'rare' ? '★' : '◆', label: m.name, desc: m.desc,
+    });
+  }
+
+  // ── FALLBACKS (always available) ──
+  const fallbacks: UpgradeCard[] = [
+    { type: 'fallback', id: 'hp_restore',    rarity: 'common', icon: '❤', label: 'Field Medkit',   desc: 'Restore 3 HP immediately' },
+    { type: 'fallback', id: 'corr_purge',    rarity: 'rare',   icon: 'P', label: 'Void Purge',     desc: 'Reduce corruption by 20' },
+  ];
+  if (!usedModIds.has('void_drain'))   fallbacks.push({ type: 'fallback', id: 'void_drain_f',  rarity: 'common', icon: 'D', label: 'Void Drain',     desc: 'Killing void enemies reduces corruption by 3' });
+  if (!usedModIds.has('pack_hunter'))  fallbacks.push({ type: 'fallback', id: 'pack_hunter_f', rarity: 'common', icon: 'P', label: 'Pack Awareness', desc: '+8% damage per enemy within 200px' });
+  pool.push(...fallbacks);
+
+  // ── PICK 3 CARDS with weighted selection + type diversity ──
+  if (pool.length <= 3) return pool;
+
+  const picked: UpgradeCard[] = [];
+  const remaining = [...pool];
+  const pickedTypes = new Set<UpgradeType>();
+
+  for (let i = 0; i < 3 && remaining.length > 0; i++) {
+    // Calculate weights: base rarity weight * type weight * diversity bonus
+    const weights = remaining.map(card => {
+      let w = RARITY_WEIGHT[card.rarity] * TYPE_WEIGHT[card.type];
+      // Diversity bonus: strongly prefer types we haven't picked yet
+      if (pickedTypes.has(card.type)) w *= 0.15;
+      // Don't show two modifiers with same id
+      if (picked.some(p => p.id === card.id)) w = 0;
+      return w;
+    });
+
+    const card = weightedPick(remaining, weights);
+    picked.push(card);
+    pickedTypes.add(card.type);
+    remaining.splice(remaining.indexOf(card), 1);
+  }
+
+  // Sort: legendary first, then rare, then common
+  const rarityOrder: Record<UpgradeRarity, number> = { legendary: 0, rare: 1, common: 2 };
+  picked.sort((a, b) => rarityOrder[a.rarity] - rarityOrder[b.rarity]);
+
+  return picked;
 }
