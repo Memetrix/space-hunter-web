@@ -11,9 +11,10 @@ import {
   PLAYER_COLOR, XP_PER_LEVEL, MAX_LEVEL
 } from './constants';
 import { CREATURE_DEFS } from '../data/creatures';
-import { type ModifierDef, rollModifiers } from '../data/modifiers';
-import { WEAPON_DEFS, WEAPON_LEVEL_PERKS } from '../data/weapons';
+import { type ModifierDef } from '../data/modifiers';
+import { WEAPON_DEFS, WEAPON_LEVEL_PERKS, WEAPON_MUTATIONS } from '../data/weapons';
 import { KIT_DEFS } from '../data/kits';
+import { type UpgradeCard, type ProgressionState, generateUpgrades } from '../data/upgrades';
 import {
   halSay,
   HAL_HUNT_START, HAL_WAVE_INCOMING, HAL_FIRST_KILL, HAL_KILL_STREAK,
@@ -88,9 +89,11 @@ export interface GameCallbacks {
     damageTaken: number;
     ingredients: Array<{ id: string; name: string }>;
   }) => void;
-  /** Called between waves to let the player pick a modifier. Game is paused until resolved. */
+  /** Called between waves to let the player pick an upgrade. Game is paused until resolved. */
   onModifierPick: (choices: ModifierDef[], resolve: (picked: ModifierDef) => void) => void;
   onWeaponPerkPick: (perks: string[], weaponName: string, resolve: (picked: string) => void) => void;
+  onUpgradePick: (choices: UpgradeCard[], resolve: (picked: UpgradeCard) => void) => void;
+  onKitT3Choice: (kitId: string, kitName: string, resolve: (path: 'clean' | 'void') => void) => void;
 }
 
 export class Game {
@@ -135,8 +138,8 @@ export class Game {
     damage: number; range: number;
   }> = [];
 
-  // Weapon leveling
-  weaponLevel = 0;
+  // Weapon leveling (starts at 1; perks are levels 2-5)
+  weaponLevel = 1;
   weaponPerkPending = false;
 
   // State
@@ -183,12 +186,21 @@ export class Game {
   // Active modifiers
   activeModifiers: string[] = [];
   modifierPickPending = false;
+  upgradePending = false;
   pendingLevelUpPicks = 0;
   adrenalineKills = 0;
   adrenalineTimer = 0;
   adrenalineStacks = 0;
   momentumHits = 0;
   killsSinceLastHeal = 0;
+
+  // Progression state (per-run)
+  runKitTiers: Record<string, number> = {};
+  kitPerksTaken: string[] = [];
+  masteryTaken: string[] = [];
+  resonanceTaken: string[] = [];
+  kitT3Pending: string[] = [];
+  kitT3ChoicePending = false;
 
   // HAL event tracking
   halCooldown = 0;
@@ -221,9 +233,10 @@ export class Game {
     this.hpBonus = hpBonus;
     this.magBonus = magBonus;
 
-    // Initialize kit cooldowns
+    // Initialize kit cooldowns and run-local kit tiers
     for (const kit of kits) {
       this.kitCooldowns[kit] = 0;
+      this.runKitTiers[kit] = 1;
     }
 
     // Contract-specific init
@@ -741,15 +754,14 @@ export class Game {
       this.halCooldown = 4;
     }
 
-    // Deferred level-up modifier pick
-    if (this.pendingLevelUpPicks > 0 && !this.modifierPickPending && !this.weaponPerkPending && this.activeModifiers.length < 12) {
+    // Deferred level-up: offer 3-slot upgrade panel
+    if (this.pendingLevelUpPicks > 0 && !this.upgradePending && !this.kitT3ChoicePending) {
       this.pendingLevelUpPicks--;
-      // Alternate: odd levels get weapon perk, even get generic modifier
-      if (this.weaponLevel > 0 && this.weaponLevel <= 5) {
-        this.offerWeaponPerk();
-      } else {
-        this.offerModifierPick();
-      }
+      this.offerUpgradePanel();
+    }
+    // Process kit T3 path choices
+    if (this.kitT3Pending.length > 0 && !this.upgradePending && !this.kitT3ChoicePending) {
+      this.processKitT3Choice();
     }
 
     // Camera
@@ -906,9 +918,9 @@ export class Game {
         this.halCooldown = 5;
       }
 
-      // Offer modifier pick every 2nd wave
-      if (this.waveCount > 0 && this.waveCount % 2 === 0 && this.activeModifiers.length < 6) {
-        this.offerModifierPick();
+      // Queue upgrade pick every 2nd wave
+      if (this.waveCount > 0 && this.waveCount % 2 === 0 && !this.upgradePending) {
+        this.pendingLevelUpPicks++;
       }
     }
 
@@ -1097,10 +1109,8 @@ export class Game {
         setTimeout(() => this.hud.showHalMessage(halSay(HAL_LEVEL_UP), 4), 1000);
         this.player.maxHp += 1;
         this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
-        // Queue modifier pick for next update tick
+        // Queue upgrade pick for next update tick
         this.pendingLevelUpPicks++;
-        // Also increment weapon level for perk choice
-        this.weaponLevel++;
       }
     }
 
@@ -1463,66 +1473,172 @@ export class Game {
     }
   }
 
-  /** Pause game and let player pick a modifier */
-  private offerModifierPick() {
-    const choices = rollModifiers(3, this.activeModifiers);
+  /** Build current progression state snapshot for upgrade generation */
+  private getProgressionState(): ProgressionState {
+    return {
+      weaponId: this.player.weaponId,
+      weaponLevel: this.weaponLevel,
+      weaponMutated: this.player.mutated !== '',
+      weaponMutationType: this.player.mutated,
+      corruption: this.player.corruption,
+      equippedKits: this.equippedKits,
+      kitTiers: { ...this.runKitTiers },
+      kitPerksTaken: this.kitPerksTaken,
+      masteryTaken: this.masteryTaken,
+      resonanceTaken: this.resonanceTaken,
+      modifiersTaken: this.activeModifiers,
+      kitT3Pending: this.kitT3Pending,
+    };
+  }
+
+  /** Pause game and show 3-slot upgrade panel */
+  private offerUpgradePanel() {
+    const state = this.getProgressionState();
+    const choices = generateUpgrades(state);
+    // Sync back kitT3Pending (generateUpgrades may have pushed new entries)
+    this.kitT3Pending = state.kitT3Pending;
     if (choices.length === 0) return;
-    this.modifierPickPending = true;
+    this.upgradePending = true;
     this.paused = true;
-    this.callbacks.onModifierPick(choices, (picked) => {
-      this.applyModifier(picked);
-      this.modifierPickPending = false;
+    this.callbacks.onUpgradePick(choices, (picked) => {
+      this.applyUpgrade(picked);
+      this.upgradePending = false;
       this.paused = false;
     });
   }
 
-  /** Pause game and let player pick a weapon perk */
-  private offerWeaponPerk() {
-    const perks = WEAPON_LEVEL_PERKS[this.player.weaponId];
-    if (!perks || this.weaponLevel < 1 || this.weaponLevel > perks.length) {
-      this.offerModifierPick();
-      return;
-    }
-    // Offer 2 random perks from the weapon's perk list
-    const available = perks.filter((_, i) => i < this.weaponLevel + 2);
-    const shuffled = [...available].sort(() => Math.random() - 0.5);
-    const choices = shuffled.slice(0, Math.min(3, shuffled.length));
-    if (choices.length === 0) { this.offerModifierPick(); return; }
-    const weaponDef = WEAPON_DEFS[this.player.weaponId];
-    this.weaponPerkPending = true;
+  /** Process pending kit T3 path choices */
+  private processKitT3Choice() {
+    if (this.kitT3Pending.length === 0) return;
+    const kitId = this.kitT3Pending.shift()!;
+    const kdef = KIT_DEFS[kitId];
+    this.kitT3ChoicePending = true;
     this.paused = true;
-    this.callbacks.onWeaponPerkPick(choices, weaponDef?.name || 'Weapon', (picked) => {
-      this.activeModifiers.push('wperk_' + picked);
-      this.weaponPerkPending = false;
+    this.callbacks.onKitT3Choice(kitId, kdef?.name ?? kitId, (path) => {
+      this.runKitTiers[kitId] = 3;
+      this.player.maxHp += 1;
+      this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
+      this.hud.showMessage(`${(kdef?.name ?? kitId).toUpperCase()} T3 — ${path.toUpperCase()} PATH`, 2);
+      this.kitT3ChoicePending = false;
       this.paused = false;
-      this.hud.showMessage('+ ' + picked.toUpperCase(), 2);
     });
   }
 
-  /** Apply a picked modifier's instant effects */
-  private applyModifier(mod: ModifierDef) {
-    this.activeModifiers.push(mod.id);
-    switch (mod.id) {
-      case 'tough':
-        this.player.maxHp += 3;
-        this.player.hp = this.player.maxHp;
+  /** Apply a picked upgrade card */
+  private applyUpgrade(card: UpgradeCard) {
+    switch (card.type) {
+      case 'weapon_upgrade': {
+        this.weaponLevel++;
+        const wdef = WEAPON_DEFS[this.player.weaponId];
+        // Apply perk effect
+        if (card.perkEffect === 'damage' && typeof card.perkValue === 'number') {
+          // Stored as bonus damage on active modifiers for getModDamageMult
+          this.weapons.bonusDamage = (this.weapons.bonusDamage ?? 0) + card.perkValue;
+        } else if (card.perkEffect === 'fire_rate' && typeof card.perkValue === 'number') {
+          this.weapons.fireRateBonus = (this.weapons.fireRateBonus ?? 0) + card.perkValue;
+        } else if (card.perkEffect === 'piercing') {
+          this.weapons.piercingCount = (this.weapons.piercingCount ?? 0) + 1;
+        } else if (card.perkEffect === 'fire_rate_mag') {
+          this.weapons.fireRateBonus = (this.weapons.fireRateBonus ?? 0) - 0.18;
+          this.player.magSize += 6;
+        } else if (card.perkEffect === 'pellets') {
+          this.weapons.extraPellets = (this.weapons.extraPellets ?? 0) + 1;
+        } else if (card.perkEffect === 'pellets_rate') {
+          this.weapons.extraPellets = (this.weapons.extraPellets ?? 0) + 2;
+          this.weapons.fireRateBonus = (this.weapons.fireRateBonus ?? 0) - 0.24;
+        } else if (card.perkEffect === 'bullet_speed' && typeof card.perkValue === 'number') {
+          this.weapons.bulletSpeedBonus = (this.weapons.bulletSpeedBonus ?? 0) + card.perkValue;
+        } else if (card.perkEffect === 'range_bonus' && typeof card.perkValue === 'number') {
+          this.weapons.rangeBonus = (this.weapons.rangeBonus ?? 0) + card.perkValue;
+        } else if (card.perkEffect === 'radius' && typeof card.perkValue === 'number') {
+          this.weapons.radiusBonus = (this.weapons.radiusBonus ?? 0) + card.perkValue;
+        } else if (card.perkEffect === 'bounce_extra' && typeof card.perkValue === 'number') {
+          this.weapons.bounceExtra = (this.weapons.bounceExtra ?? 0) + card.perkValue;
+        } else if (card.perkEffect === 'bounce_radius' && typeof card.perkValue === 'number') {
+          this.weapons.bounceRadiusBonus = (this.weapons.bounceRadiusBonus ?? 0) + card.perkValue;
+        } else if (card.perkEffect === 'sniper_range') {
+          this.weapons.rangeBonus = (this.weapons.rangeBonus ?? 0) + 100;
+          this.weapons.bulletSpeedBonus = (this.weapons.bulletSpeedBonus ?? 0) + 100;
+        } else if (card.perkEffect === 'damage_knockback' && typeof card.perkValue === 'number') {
+          this.weapons.bonusDamage = (this.weapons.bonusDamage ?? 0) + card.perkValue;
+          this.weapons.knockback = true;
+        }
+        // Boolean perks stored as flags
+        this.activeModifiers.push(card.id);
+        this.hud.showMessage(`+ ${card.label}`, 2);
         break;
-      case 'speed':
-        this.player.baseSpeed += 25;
+      }
+      case 'mutation': {
+        this.player.mutated = card.mutationType ?? 'clean';
+        const mut = WEAPON_MUTATIONS[this.player.weaponId]?.[this.player.mutated];
+        // Apply mutation stat changes
+        if (this.player.weaponId === 'sidearm' && this.player.mutated === 'clean') {
+          // Marksman Rifle: fire rate halved, damage x3, +50% range
+          this.weapons.fireRateBonus = (this.weapons.fireRateBonus ?? 0) + 0.225;
+          this.weapons.bonusDamage = (this.weapons.bonusDamage ?? 0) + 4; // ~x3
+          this.weapons.rangeBonus = (this.weapons.rangeBonus ?? 0) + 110;
+        } else if (this.player.weaponId === 'sidearm' && this.player.mutated === 'void') {
+          // Entropy Gun: fragments on hit
+          this.weapons.fragmentOnHit = true;
+        }
+        // Other mutation effects stored as flags for weapon system
+        this.activeModifiers.push(card.id);
+        this.hud.showMessage(`MUTATION: ${mut?.name ?? card.label}`, 3);
         break;
-      case 'magplus':
-        this.player.magSize += 4;
+      }
+      case 'mastery': {
+        this.masteryTaken.push(card.id);
+        this.activeModifiers.push(card.id);
+        this.hud.showMessage(`MASTERY: ${card.label}`, 2);
         break;
-      case 'dodge':
-        this.player.dodgeChance = 0.1;
+      }
+      case 'kit_tier': {
+        const kitId = card.kitId!;
+        const newTier = card.newTier ?? 2;
+        this.runKitTiers[kitId] = newTier;
+        this.player.maxHp += 1;
+        this.player.hp = Math.min(this.player.hp + 1, this.player.maxHp);
+        this.hud.showMessage(`${(KIT_DEFS[kitId]?.name ?? kitId).toUpperCase()} TIER ${newTier}`, 2);
         break;
-      case 'corruption_resist':
-        this.player.corruptionResistMult = 0.75;
+      }
+      case 'kit_perk': {
+        this.kitPerksTaken.push(card.id);
+        this.activeModifiers.push(card.id);
+        this.hud.showMessage(`+ ${card.label}`, 2);
         break;
-      case 'reload':
+      }
+      case 'resonance': {
+        this.resonanceTaken.push(card.id);
+        this.activeModifiers.push(card.id);
+        this.hud.showMessage(`RESONANCE: ${card.label}`, 2);
         break;
+      }
+      case 'modifier': {
+        this.activeModifiers.push(card.id);
+        // Apply instant modifier effects
+        if (card.id === 'tough') { this.player.maxHp += 3; this.player.hp = this.player.maxHp; }
+        else if (card.id === 'speed') { this.player.baseSpeed += 25; }
+        else if (card.id === 'magplus') { this.player.magSize += 4; }
+        else if (card.id === 'dodge') { this.player.dodgeChance = 0.1; }
+        else if (card.id === 'corruption_resist') { this.player.corruptionResistMult = 0.75; }
+        else if (card.id === 'mastery_dmg') { this.weapons.bonusDamage = (this.weapons.bonusDamage ?? 0) + 2; }
+        this.hud.showMessage(`+ ${card.label}`, 2);
+        break;
+      }
+      case 'fallback': {
+        if (card.id === 'hp_restore') {
+          this.player.hp = Math.min(this.player.hp + 3, this.player.maxHp);
+        } else if (card.id === 'corr_purge') {
+          this.player.corruption = Math.max(0, this.player.corruption - 20);
+        } else if (card.id === 'void_drain_f') {
+          this.activeModifiers.push('void_drain');
+        } else if (card.id === 'pack_hunter_f') {
+          this.activeModifiers.push('pack_hunter');
+        }
+        this.hud.showMessage(`+ ${card.label}`, 2);
+        break;
+      }
     }
-    this.hud.showMessage(`+ ${mod.name.toUpperCase()}`, 2);
   }
 
   /** Check if a modifier is active */

@@ -3,8 +3,9 @@
 import { useRef, useEffect, useCallback, useState } from 'react';
 import { useGameStore } from '../store/gameStore';
 import { useSaveStore } from '../store/saveStore';
-import { ModifierPicker } from './ModifierPicker';
+import { ModifierPicker, UpgradePicker, KitT3Choice } from './ModifierPicker';
 import type { ModifierDef } from '../data/modifiers';
+import type { UpgradeCard } from '../data/upgrades';
 
 export function GameCanvas() {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -17,13 +18,21 @@ export function GameCanvas() {
   const hpUpgrade = useSaveStore(s => s.shipUpgrades.max_hp ?? 0);
   const magUpgrade = useSaveStore(s => s.shipUpgrades.mag_size ?? 0);
 
-  // Modifier picker state
+  // Legacy modifier picker state (kept for compat)
   const [modChoices, setModChoices] = useState<ModifierDef[] | null>(null);
   const modResolveRef = useRef<((m: ModifierDef) => void) | null>(null);
 
-  // Weapon perk picker state
+  // Weapon perk picker state (legacy)
   const [weaponPerks, setWeaponPerks] = useState<{ perks: string[]; weaponName: string } | null>(null);
   const weaponPerkResolveRef = useRef<((p: string) => void) | null>(null);
+
+  // New upgrade picker state
+  const [upgradeChoices, setUpgradeChoices] = useState<UpgradeCard[] | null>(null);
+  const upgradeResolveRef = useRef<((card: UpgradeCard) => void) | null>(null);
+
+  // Kit T3 path choice state
+  const [kitT3, setKitT3] = useState<{ kitId: string; kitName: string } | null>(null);
+  const kitT3ResolveRef = useRef<((path: 'clean' | 'void') => void) | null>(null);
 
   const finishHunt = useCallback((status: 'COMPLETED' | 'FAILED' | 'ABANDONED', result: Parameters<typeof setHuntResult>[0] extends infer R ? Omit<R, 'contractName' | 'huntStatus' | 'parTime'> : never) => {
     setHuntResult({
@@ -46,7 +55,7 @@ export function GameCanvas() {
       const { Application } = PIXI;
       const { Game } = await import('../game/Game');
 
-      // Global pixel-art settings â NEAREST neighbor, no smoothing
+      // Global pixel-art settings — NEAREST neighbor, no smoothing
       PIXI.TextureSource.defaultOptions.scaleMode = 'nearest';
       PIXI.AbstractRenderer.defaultOptions.roundPixels = true;
 
@@ -91,6 +100,14 @@ export function GameCanvas() {
           onModifierPick: (choices, resolve) => {
             setModChoices(choices);
             modResolveRef.current = resolve;
+          },
+          onUpgradePick: (choices, resolve) => {
+            setUpgradeChoices(choices);
+            upgradeResolveRef.current = resolve;
+          },
+          onKitT3Choice: (kitId, kitName, resolve) => {
+            setKitT3({ kitId, kitName });
+            kitT3ResolveRef.current = resolve;
           },
         },
         {
@@ -146,10 +163,22 @@ export function GameCanvas() {
     modResolveRef.current = null;
   };
 
+  const handleUpgradePick = (card: UpgradeCard) => {
+    setUpgradeChoices(null);
+    upgradeResolveRef.current?.(card);
+    upgradeResolveRef.current = null;
+  };
+
+  const handleKitT3Pick = (path: 'clean' | 'void') => {
+    setKitT3(null);
+    kitT3ResolveRef.current?.(path);
+    kitT3ResolveRef.current = null;
+  };
+
   return (
     <div className="h-full w-full relative">
       <div ref={containerRef} className="h-full w-full" />
-      {/* Weapon perk picker overlay */}
+      {/* Weapon perk picker overlay (legacy) */}
       {weaponPerks && (
         <div className="absolute inset-0 z-50 flex items-center justify-center"
           style={{ background: 'rgba(5,5,8,0.85)', backdropFilter: 'blur(4px)' }}>
@@ -167,7 +196,11 @@ export function GameCanvas() {
           </div>
         </div>
       )}
-      {/* Modifier picker overlay */}
+      {/* New upgrade picker overlay */}
+      {upgradeChoices && <UpgradePicker choices={upgradeChoices} onPick={handleUpgradePick} />}
+      {/* Kit T3 path choice overlay */}
+      {kitT3 && <KitT3Choice kitName={kitT3.kitName} onPick={handleKitT3Pick} />}
+      {/* Legacy modifier picker overlay */}
       {modChoices && <ModifierPicker choices={modChoices} onPick={handleModPick} />}
       {/* Abandon overlay button */}
       <button

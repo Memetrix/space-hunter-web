@@ -22,6 +22,19 @@ export interface Bullet {
 export class WeaponSystem {
   bullets: Bullet[] = [];
 
+  // Upgrade bonuses (accumulated from weapon perks & mutations)
+  bonusDamage = 0;
+  fireRateBonus = 0;
+  bulletSpeedBonus = 0;
+  rangeBonus = 0;
+  radiusBonus = 0;
+  piercingCount = 0;
+  extraPellets = 0;
+  bounceExtra = 0;
+  bounceRadiusBonus = 0;
+  knockback = false;
+  fragmentOnHit = false;
+
   fire(player: Player): Bullet[] {
     const def = WEAPON_DEFS[player.weaponId];
     if (!def) return [];
@@ -32,7 +45,7 @@ export class WeaponSystem {
       return [];
     }
 
-    player.fireCooldown = def.fireRate;
+    player.fireCooldown = Math.max(0.02, def.fireRate + this.fireRateBonus);
     if (def.magSize < 999) player.magAmmo--;
 
     const newBullets = this.createBullets(player.pos, player.aimAngle, def);
@@ -50,17 +63,21 @@ export class WeaponSystem {
   }
 
   private createBullets(pos: Vec2, angle: number, def: WeaponDef): Bullet[] {
+    const speed = def.bulletSpeed + this.bulletSpeedBonus;
+    const range = def.range + this.rangeBonus;
+    const dmg = def.damage + this.bonusDamage;
+    const rad = def.bulletRadius + this.radiusBonus;
     const makeBullet = (a: number, opts: Partial<Bullet> = {}): Bullet => ({
       pos: v2(pos.x, pos.y),
-      vel: v2fromAngle(a, def.bulletSpeed),
-      radius: def.bulletRadius,
+      vel: v2fromAngle(a, speed),
+      radius: rad,
       color: def.color,
-      damage: def.damage,
-      life: def.range / Math.max(def.bulletSpeed, 1),
-      maxLife: def.range / Math.max(def.bulletSpeed, 1),
-      piercing: false,
+      damage: dmg,
+      life: range / Math.max(speed, 1),
+      maxLife: range / Math.max(speed, 1),
+      piercing: this.piercingCount > 0,
       homing: false,
-      bounces: 0,
+      bounces: this.bounceExtra,
       aoeRadius: 0,
       fromPlayer: true,
       hitSet: new Set(),
@@ -72,7 +89,7 @@ export class WeaponSystem {
         return [makeBullet(angle)];
 
       case 'scatter': {
-        const count = 5;
+        const count = 5 + this.extraPellets;
         const spread = 0.4;
         return Array.from({ length: count }, (_, i) => {
           const a = angle - spread / 2 + (spread / (count - 1)) * i + randRange(-0.05, 0.05);

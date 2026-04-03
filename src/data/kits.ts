@@ -27,3 +27,95 @@ export const KIT_DEFS: Record<string, KitDef> = {
 };
 
 export const ALL_KIT_IDS = Object.keys(KIT_DEFS);
+
+// ── Kit Perks (2 per kit, offered during runs) ──
+
+export interface KitPerkDef {
+  id: string;
+  icon: string;
+  name: string;
+  rarity: 'common' | 'rare';
+  desc: string;
+}
+
+export const KIT_PERKS: Record<string, KitPerkDef[]> = {
+  stim_pack: [
+    { id: 'withdrawal',       icon: 'W', name: 'Withdrawal',       rarity: 'common', desc: 'After stim wears off: next hit absorbed (0 dmg).' },
+    { id: 'adrenaline_spike', icon: 'A', name: 'Adrenaline Spike', rarity: 'rare',   desc: 'Stim causes nearby enemies to scatter 80px.' },
+  ],
+  flash_trap: [
+    { id: 'trap_magnetism',   icon: 'M', name: 'Trap Magnetism',   rarity: 'rare',   desc: 'Stunned enemy pulls 2 nearby enemies toward it.' },
+    { id: 'fragile_state',    icon: 'F', name: 'Fragile State',    rarity: 'common', desc: 'Enemies emerging from stun take 2x dmg for 1s.' },
+  ],
+  smoke_kit: [
+    { id: 'afterburn',        icon: 'A', name: 'Afterburn',        rarity: 'common', desc: 'Enemies exiting smoke are slowed 40% for 2s.' },
+    { id: 'lure',             icon: 'L', name: 'Lure',             rarity: 'rare',   desc: 'Multiple enemies inside smoke ignore player and attack each other.' },
+  ],
+  familiar_kit: [
+    { id: 'spotter',          icon: 'S', name: 'Spotter',          rarity: 'common', desc: 'Familiar marks highest-HP enemy — your bullets +30% to marked target.' },
+    { id: 'leash_break',      icon: 'X', name: 'Leash Break',      rarity: 'rare',   desc: 'If familiar is hit, it explodes once (5 dmg, 80px AOE).' },
+  ],
+  blink_kit: [
+    { id: 'arrival_strike',   icon: 'A', name: 'Arrival Strike',   rarity: 'common', desc: 'Blink arrival pushes nearby enemies away 100px.' },
+    { id: 'swap',             icon: 'S', name: 'Swap',             rarity: 'rare',   desc: 'Blink teleports to nearest enemy instead of direction.' },
+  ],
+  chain_kit: [
+    { id: 'conductor',        icon: 'C', name: 'Conductor',        rarity: 'rare',   desc: 'While enemy is tethered, your bullets ricochet off them once.' },
+    { id: 'drag',             icon: 'D', name: 'Drag',             rarity: 'common', desc: 'Tethered enemy is slowly pulled toward you 20px/s.' },
+  ],
+  charge_kit: [
+    { id: 'aftershock',       icon: 'A', name: 'Aftershock',       rarity: 'common', desc: 'Charge impact leaves a 3s slow field at landing point.' },
+    { id: 'redirect',         icon: 'R', name: 'Redirect',         rarity: 'rare',   desc: 'Hitting a wall during charge bounces you perpendicular.' },
+  ],
+  mirage_kit: [
+    { id: 'magnet_decoy',     icon: 'M', name: 'Magnet Decoy',     rarity: 'common', desc: 'Decoy pulls enemies within 120px toward it.' },
+    { id: 'copycat',          icon: 'X', name: 'Copycat',          rarity: 'rare',   desc: 'Decoy fires your last weapon shot every 3s.' },
+  ],
+  turret_kit: [
+    { id: 'target_priority',  icon: 'T', name: 'Target Priority',  rarity: 'common', desc: 'Turret only fires at enemies you have hit in the last 2s.' },
+    { id: 'overheat_turret',  icon: 'O', name: 'Overheat',         rarity: 'rare',   desc: 'Turret explodes on death (70px AOE, 4 dmg) instead of disappearing.' },
+  ],
+  drone_kit: [
+    { id: 'intercept_link',   icon: 'I', name: 'Intercept Link',   rarity: 'rare',   desc: 'Drone-intercepted bullets explode (20px AOE) damaging the shooter.' },
+    { id: 'shepherd',         icon: 'H', name: 'Shepherd',         rarity: 'common', desc: 'Drone slowly herds pickups toward player.' },
+  ],
+  pack_kit: [
+    { id: 'sacrifice',        icon: 'S', name: 'Sacrifice',        rarity: 'rare',   desc: 'When an ally dies, you gain 2s invincibility.' },
+    { id: 'frenzy_aura',      icon: 'F', name: 'Frenzy Aura',      rarity: 'common', desc: 'Each nearby ally increases your fire rate 8% (max 3).' },
+  ],
+  void_surge: [
+    { id: 'void_trail',       icon: 'V', name: 'Void Trail',       rarity: 'common', desc: 'Surge leaves a corruption zone along your path (3s, +3 corr/s to enemies).' },
+    { id: 'phase_burst',      icon: 'P', name: 'Phase Burst',      rarity: 'rare',   desc: 'At surge end: shockwave pushes all enemies 80px.' },
+  ],
+  anchor_kit: [
+    { id: 'crush_zone',       icon: 'C', name: 'Crush Zone',       rarity: 'common', desc: 'Enemies inside anchor pull zone take 2x dmg from all sources.' },
+    { id: 'chain_reaction',   icon: 'X', name: 'Chain Reaction',   rarity: 'rare',   desc: 'Enemies killed inside anchor explosion each spawn a mini void pool.' },
+  ],
+  rupture_kit: [
+    { id: 'scatter_field',    icon: 'S', name: 'Scatter',          rarity: 'common', desc: 'Rupture launches shrapnel in 8 directions (3 dmg each).' },
+    { id: 'drain_aura',       icon: 'D', name: 'Drain Aura',       rarity: 'rare',   desc: 'While inside rupture field, player regenerates 1 HP per 2s.' },
+  ],
+};
+
+// ── Resonance Pool (cross-kit combos, available when both equipped kits are T3) ──
+
+export interface ResonanceDef {
+  id: string;
+  kits: [string, string];
+  icon: string;
+  name: string;
+  desc: string;
+}
+
+export const RESONANCE_POOL: ResonanceDef[] = [
+  { id: 'linked_fuse',      kits: ['flash_trap', 'blink_kit'],    icon: 'L', name: 'Linked Fuse',    desc: 'Blink teleports you to nearest triggered trap.' },
+  { id: 'sympathetic_fire',  kits: ['drone_kit', 'blink_kit'],    icon: 'S', name: 'Sympathetic Fire', desc: 'Drone fires when you fire, not on timer.' },
+  { id: 'overcharge_drone',  kits: ['drone_kit', 'anchor_kit'],   icon: 'O', name: 'Overcharge',      desc: 'Drone fires 2x faster after anchor well expires.' },
+  { id: 'trap_aggro',        kits: ['flash_trap', 'mirage_kit'],  icon: 'T', name: 'Trap Aggro',      desc: 'Decoy automatically moves toward nearest trap.' },
+  { id: 'void_feedback',     kits: ['void_surge', 'rupture_kit'], icon: 'V', name: 'Void Feedback',   desc: 'Rupture recharges void surge instantly.' },
+  { id: 'familiar_bond',     kits: ['familiar_kit', 'pack_kit'],  icon: 'F', name: 'Familiar Bond',   desc: 'Familiar buffs your summoned allies (+30% speed).' },
+  { id: 'smoke_blink',       kits: ['smoke_kit', 'blink_kit'],    icon: 'B', name: 'Smoke Step',      desc: 'Blink always lands in a smoke cloud.' },
+  { id: 'turret_familiar',   kits: ['turret_kit', 'familiar_kit'], icon: 'U', name: 'Familiar Link',  desc: 'Turret gains familiar healing aura (1 HP regen/5s to player while turret active).' },
+  { id: 'chain_anchor',      kits: ['chain_kit', 'anchor_kit'],   icon: 'C', name: 'Gravity Chain',   desc: 'Tethered enemies are also pulled by anchor wells.' },
+  { id: 'surge_charge',      kits: ['void_surge', 'charge_kit'],  icon: 'X', name: 'Surge Charge',    desc: 'Void surge resets charge kit cooldown instantly.' },
+];
