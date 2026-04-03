@@ -52,7 +52,7 @@ function angleTo8Dir(vx: number, vy: number): string {
 }
 
 // Sprites that have 8-direction folders
-const SPRITES_WITH_DIRS = ['player', 'void_leech', 'shadow_crawler', 'abyss_worm', 'nether_stalker', 'cave_lurker', 'tide_wraith'];
+const SPRITES_WITH_DIRS = ['player', 'void_leech', 'shadow_crawler', 'abyss_worm', 'nether_stalker', 'cave_lurker', 'tide_wraith', 'rift_parasite', 'void_spawn'];
 
 // Ã¢ÂÂÃ¢ÂÂ Void breach zone interface Ã¢ÂÂÃ¢ÂÂ
 interface VoidBreachZone {
@@ -439,6 +439,9 @@ export class Game {
       abyss_worm: 'running-4-frames',
       nether_stalker: 'running-4-frames',
       cave_lurker: 'running-4-frames',
+      tide_wraith: 'running-4-frames',
+      rift_parasite: 'running-4-frames',
+      void_spawn: 'running-4-frames',
     };
     const FRAME_COUNTS: Record<string, number> = {
       player: 6,
@@ -447,6 +450,9 @@ export class Game {
       abyss_worm: 4,
       nether_stalker: 4,
       cave_lurker: 4,
+      tide_wraith: 4,
+      rift_parasite: 4,
+      void_spawn: 4,
     };
 
     const loadBatch = async (batch: Array<{ key: string; url: string }>) => {
