@@ -207,7 +207,7 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: '#050508ee' }}>
-      <div className="w-full max-w-[540px] h-full max-h-[900px] flex flex-col" style={{ fontFamily: 'var(--font-pixel)' }}>
+      <div className="w-full max-w-[540px] h-full flex flex-col overflow-y-auto" style={{ fontFamily: 'var(--font-pixel)' }}>
 
         {/* Header */}
         <div className="px-4 pt-4 pb-2 text-center shrink-0">
@@ -233,59 +233,51 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
         )}
 
         {/* Grid area */}
-        <div className="flex-1 mx-3 flex items-center justify-center" style={{ minHeight: 0 }}>
-          {phase === 'countdown' ? (
+        <div className="flex-1 mx-3 flex items-center justify-center" style={{ minHeight: 200 }}>
+          {phase === 'countdown' && (
             <div className="text-center">
               <p className="text-6xl font-bold" style={{ color: '#ff4400', textShadow: '0 0 24px rgba(255,68,0,0.5)' }}>
                 {countdown > 0 ? countdown : 'GO!'}
               </p>
               <p className="text-sm text-[#886644] mt-3">Tap ingredients before they fade</p>
             </div>
-          ) : phase === 'cooking' || phase === 'result' ? (
+          )}
+
+          {phase === 'cooking' && (
             <div
               className="grid gap-2 w-full"
-              style={{
-                gridTemplateColumns: `repeat(${cfg.cols}, 1fr)`,
-                maxWidth: cfg.cols * 100,
-              }}
+              style={{ gridTemplateColumns: `repeat(${cfg.cols}, 1fr)`, maxWidth: cfg.cols * 100 }}
             >
               {grid.map((cell, idx) => {
                 const isActive = cell.kind !== 'empty';
                 const age = isActive ? (performance.now() - cell.spawnedAt) / cell.lifeMs : 0;
                 const fading = age > 0.7;
-
                 return (
                   <button
                     key={idx}
                     className="aspect-square flex items-center justify-center select-none transition-all duration-100"
                     style={{
                       background: isActive
-                        ? cell.kind === 'void'
-                          ? 'radial-gradient(circle, #440066 0%, #220033 100%)'
-                          : cell.kind === 'golden'
-                            ? 'radial-gradient(circle, #ffee66 0%, #996600 100%)'
-                            : `radial-gradient(circle, ${cell.color}88 0%, ${cell.color}33 100%)`
+                        ? cell.kind === 'void' ? 'radial-gradient(circle, #440066 0%, #220033 100%)'
+                        : cell.kind === 'golden' ? 'radial-gradient(circle, #ffee66 0%, #996600 100%)'
+                        : `radial-gradient(circle, ${cell.color}88 0%, ${cell.color}33 100%)`
                         : 'rgba(20,15,10,0.5)',
                       border: isActive
-                        ? cell.kind === 'void'
-                          ? '2px solid #cc00ff'
-                          : cell.kind === 'golden'
-                            ? '2px solid #ffdd44'
-                            : `2px solid ${cell.color}88`
+                        ? cell.kind === 'void' ? '2px solid #cc00ff'
+                        : cell.kind === 'golden' ? '2px solid #ffdd44'
+                        : `2px solid ${cell.color}88`
                         : '1px solid #221100',
                       borderRadius: cell.kind === 'void' ? '8px' : '12px',
                       opacity: isActive ? (fading ? 0.4 : 1) : 0.3,
                       boxShadow: isActive && !fading
-                        ? cell.kind === 'golden'
-                          ? '0 0 20px rgba(255,215,0,0.5), inset 0 0 10px rgba(255,255,200,0.2)'
-                          : cell.kind === 'void'
-                            ? '0 0 16px rgba(200,0,255,0.4)'
-                            : `0 0 12px ${cell.color}33`
+                        ? cell.kind === 'golden' ? '0 0 20px rgba(255,215,0,0.5), inset 0 0 10px rgba(255,255,200,0.2)'
+                        : cell.kind === 'void' ? '0 0 16px rgba(200,0,255,0.4)'
+                        : `0 0 12px ${cell.color}33`
                         : 'none',
                       transform: isActive && !fading ? 'scale(1)' : isActive ? 'scale(0.85)' : 'scale(0.9)',
                       touchAction: 'manipulation',
                     }}
-                    disabled={!isActive || phase === 'result'}
+                    disabled={!isActive}
                     onPointerDown={(e) => { e.preventDefault(); tapCell(idx); }}
                   >
                     {isActive && (
@@ -302,11 +294,10 @@ export function CookingGame({ recipe, onComplete, onCancel }: Props) {
                 );
               })}
             </div>
-          ) : null}
+          )}
 
-          {/* Result overlay */}
           {phase === 'result' && (
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-5" style={{ background: 'rgba(5,5,8,0.92)' }}>
+            <div className="flex flex-col items-center justify-center gap-5 py-8">
               <div className="text-4xl tracking-[8px]">
                 {[1, 2, 3].map(i => (
                   <span key={i} style={{
